@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Xnergy Stock Analysis</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="container container-wide">
+        <header class="main-header">
+            <h1>Sistema de Análisis de Stock</h1>
+            <div class="user-controls">
+                <span>Usuario: {{ session.user }}</span>
+                <a href="/logout" class="btn-small">Salir</a>
+            </div>
+        </header>
+
+        {% with messages = get_flashed_messages() %}
+        {% if messages %}
+        <div class="alerts">
+            {% for message in messages %}
+            <div class="alert info">{{ message }}</div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endwith %}
+
+        <!-- ACTIONS ROW: RESET BUTTON -->
+        <div class="toolbar">
+            <div class="status-indicator">
+                {% if inventory_loaded %}
+                <span class="badge badge-A">Stock en Memoria (Activo)</span>
+                {% else %}
+                <span class="badge badge-None">Sin Stock Cargado</span>
+                {% endif %}
+            </div>
+
+            {% if inventory_loaded %}
+            <form action="/reset" method="post" style="display:inline;">
+                <button type="submit" class="btn-danger btn-sm">Reiniciar Stock y Limpiar</button>
+            </form>
+            {% endif %}
+        </div>
+
+        <!-- UPLOAD FORM -->
+        <div class="card form-card">
+            <form action="/analyze" method="post" enctype="multipart/form-data" class="upload-form">
+
+                <!-- METADATA INPUTS -->
+                <h4 style="margin-bottom: 15px; color: var(--gray-700);">Información del Proyecto</h4>
+                <div class="input-grid" style="margin-bottom: 20px;">
+                    <div class="form-group">
+                        <label for="project">No. Proyecto</label>
+                        <input type="text" name="project" id="project" class="form-control" placeholder="Ej: 12345"
+                            required>
+                    </div>
+                    <div class="form-group">
+                        <label for="model">Modelo</label>
+                        <input type="text" name="model" id="model" class="form-control" placeholder="Ej: XN-200"
+                            required>
+                    </div>
+                    <div class="form-group">
+                        <label for="module">Módulo</label>
+                        <input type="text" name="module" id="module" class="form-control" placeholder="Ej: Mod-A"
+                            required>
+                    </div>
+                </div>
+
+
+
+                <h4 style="margin-bottom: 15px; color: var(--gray-700);">Archivos</h4>
+                <div class="input-grid">
+                    <div class="file-input-group">
+                        <label for="punch_file">PDF Punch</label>
+                        <div class="custom-file-input">
+                            <input type="file" name="punch_file" id="punch_file" accept=".pdf">
+                            <span class="file-name">Seleccionar...</span>
+                            <button type="button" class="btn-browse">Explorar</button>
+                        </div>
+                    </div>
+
+                    <div class="file-input-group">
+                        <label for="laser_file">PDF Laser</label>
+                        <div class="custom-file-input">
+                            <input type="file" name="laser_file" id="laser_file" accept=".pdf">
+                            <span class="file-name">Seleccionar...</span>
+                            <button type="button" class="btn-browse">Explorar</button>
+                        </div>
+                    </div>
+
+                    <div class="file-input-group">
+                        <label for="inventory_file">
+                            Excel Inventario
+                            {% if inventory_loaded %} (Opcional) {% else %} (Requerido) {% endif %}
+                        </label>
+                        <div class="custom-file-input">
+                            <input type="file" name="inventory_file" id="inventory_file" accept=".xlsx, .xls" {% if not
+                                inventory_loaded %} required {% endif %}>
+                            <span class="file-name">Seleccionar...</span>
+                            <button type="button" class="btn-browse">Explorar</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-actions">
+                    <button type="submit" class="btn-primary">Ejecutar Análisis</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- ANALYSIS HISTORY LABELS -->
+        {% if history %}
+        <div class="history-section">
+            <h4>Historial de Análisis (Sesión Actual)</h4>
+            <div class="history-labels">
+                {% for entry in history %}
+                <div class="history-label">
+                    <div class="hl-header">Análisis {{ entry.id }} <span class="hl-time">{{ entry.timestamp }}</span>
+                    </div>
+
+                    {% if entry.metadata and (entry.metadata.project or entry.metadata.model) %}
+                    <div class="hl-meta">
+                        <strong>Prj:</strong> {{ entry.metadata.project }} |
+                        <strong>Mod:</strong> {{ entry.metadata.model }} |
+                        <strong>Mód:</strong> {{ entry.metadata.module }}
+                    </div>
+                    {% endif %}
+                    <div class="hl-stats">
+                        <span class="stat-item sucess">A: {{ entry.stats.count_a }}</span>
+                        <span class="stat-item info">C: {{ entry.stats.count_c }}</span>
+                        <span class="stat-item danger">BO: {{ entry.stats.count_bo }}</span>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- RESULTS SECTION -->
+        {% if results %}
+        <div class="results-section">
+            <h2>Resultados Última Ejecución</h2>
+
+            <div class="summary-cards">
+                <div class="card-mini">Total: <strong>{{ stats.total }}</strong></div>
+                <div class="card-mini success">A (Int): <strong>{{ stats.count_a }}</strong></div>
+                <div class="card-mini info">C (Ext): <strong>{{ stats.count_c }}</strong></div>
+                <div class="card-mini warning">BO/Otro: <strong>{{ stats.count_bo + stats.count_none }}</strong></div>
+            </div>
+
+            <div class="actions-right">
+                <button onclick="exportTableToExcel('results_table', 'analisis_stock')" class="btn-secondary">Descargar
+                    Excel</button>
+            </div>
+
+            <div class="table-container">
+                <table class="results_table">
+                    <thead>
+                        <tr>
+                            <th>Origen</th>
+                            <th>Part #</th>
+                            <th>Qté Prod.</th>
+                            <th>Stock Int.</th>
+                            <th>Stock Ext.</th>
+                            <th>Clasif.</th>
+                            <th>Razón</th>
+                            <th>Faltante Auto.</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in results %}
+                        <tr class="row-{{ row.clasificacion }}">
+                            <td>{{ row.origen }}</td>
+                            <td class="font-mono">{{ row.part_number }}</td>
+                            <td>{{ row.qte_a_produire }}</td>
+                            <td>{{ row.stopa_quantity | int }}</td>
+                            <td>{{ row.external_quantity | int }}</td>
+                            <td><span class="badge badge-{{ row.clasificacion }}">{{ row.clasificacion }}</span></td>
+                            <td class="text-small">{{ row.razon }}</td>
+                            <td>
+                                {% if row.deficit_internal %}
+                                <span class="badge badge-BO">{{ row.deficit_internal | int }}</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- SCRIPTS -->
+    <script>
+        document.querySelectorAll('input[type="file"]').forEach(input => {
+            input.addEventListener('change', function (e) {
+                const fileName = e.target.files[0] ? e.target.files[0].name : 'Seleccionar...';
+                e.target.parentElement.querySelector('.file-name').textContent = fileName;
+                if (e.target.files[0]) e.target.parentElement.classList.add('has-file');
+            });
+        });
+
+        function exportTableToExcel(tableClass, filename = 'data') {
+            var downloadLink;
+            var dataType = 'application/vnd.ms-excel';
+            var tableSelect = document.querySelector('.' + tableClass);
+            var tableHTML = tableSelect.outerHTML.replace(/ /g, '%20');
+            filename = filename ? filename + '.xls' : 'excel_data.xls';
+            downloadLink = document.createElement("a");
+            document.body.appendChild(downloadLink);
+            if (navigator.msSaveOrOpenBlob) {
+                var blob = new Blob(['\ufeff', tableHTML], { type: dataType });
+                navigator.msSaveOrOpenBlob(blob, filename);
+            } else {
+                downloadLink.href = 'data:' + dataType + ', ' + tableHTML;
+                downloadLink.download = filename;
+                downloadLink.click();
+            }
+        }
+    </script>
+</body>
+
+</html>

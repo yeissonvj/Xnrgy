@@ -1,0 +1,8 @@
+PyPDF2
+pandas
+openpyxl
+pdfplumber
+flask
+gunicorn
+werkzeug
+python-dotenv

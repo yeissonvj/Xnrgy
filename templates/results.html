@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resultados - Xnergy Stock Analysis</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="container container-wide">
+        <header>
+            <a href="/" class="back-link">← Volver al Inicio</a>
+            <h1>Resultados del Análisis</h1>
+        </header>
+
+        <div class="summary-cards">
+            <div class="card">
+                <h3>Total Items</h3>
+                <div class="number">{{ stats.total }}</div>
+            </div>
+            <div class="card success">
+                <h3>Stock Interno (A)</h3>
+                <div class="number">{{ stats.count_a }}</div>
+            </div>
+            <div class="card info">
+                <h3>Stock Externo (C)</h3>
+                <div class="number">{{ stats.count_c }}</div>
+            </div>
+            <div class="card warning">
+                <h3>Sin Clasificar / BO</h3>
+                <div class="number">{{ stats.count_none + (stats.total - stats.count_a - stats.count_c) }}</div>
+            </div>
+        </div>
+
+        <div class="table-container">
+            <table class="results_table">
+                <thead>
+                    <tr>
+                        <th>Origen</th>
+                        <th>Part #</th>
+                        <th>Qté Prod.</th>
+                        <th>Stock Int.</th>
+                        <th>Stock Ext.</th>
+                        <th>Clasif.</th>
+                        <th>Razón</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in results %}
+                    <tr class="row-{{ row.clasificacion }}">
+                        <td>{{ row.origen }}</td>
+                        <td class="font-mono">{{ row.part_number }}</td>
+                        <td>{{ row.qte_a_produire }}</td>
+                        <td>{{ row.stopa_quantity | int }}</td>
+                        <td>{{ row.external_quantity | int }}</td>
+                        <td><span class="badge badge-{{ row.clasificacion }}">{{ row.clasificacion }}</span></td>
+                        <td class="text-small">{{ row.razon }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="actions" style="margin-top: 20px;">
+            <!-- Simple JS export functionality -->
+            <button onclick="exportTableToExcel('results_table', 'analisis_stock')" class="btn-primary">Descargar
+                Excel</button>
+        </div>
+    </div>
+
+    <script>
+        function exportTableToExcel(tableID, filename = 'data') {
+            var downloadLink;
+            var dataType = 'application/vnd.ms-excel';
+            var tableSelect = document.querySelector('.' + tableID);
+            var tableHTML = tableSelect.outerHTML.replace(/ /g, '%20');
+
+            // Specify file name
+            filename = filename ? filename + '.xls' : 'excel_data.xls';
+
+            // Create download link element
+            downloadLink = document.createElement("a");
+
+            document.body.appendChild(downloadLink);
+
+            if (navigator.msSaveOrOpenBlob) {
+                var blob = new Blob(['\ufeff', tableHTML], {
+                    type: dataType
+                });
+                navigator.msSaveOrOpenBlob(blob, filename);
+            } else {
+                // Create a link to the file
+                downloadLink.href = 'data:' + dataType + ', ' + tableHTML;
+
+                // Setting the file name
+                downloadLink.download = filename;
+
+                //triggering the function
+                downloadLink.click();
+            }
+        }
+    </script>
+</body>
+
+</html>
