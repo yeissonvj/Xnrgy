@@ -128,9 +128,24 @@ class StockAnalyzer:
                     try:
                         qte = int(float(qte_str))
                         if qte > 0:
+                            # Extraer datos adicionales (Material, Espesor) si las columnas fueron detectadas
+                            materiel_val = ""
+                            epaisseur_val = ""
+                            
+                            # Buscar columnas dinámicamente si no se hizo arriba (o reusar logica)
+                            # Para simplicidad, busquemos en row.keys() que coincidan
+                            for key in row.keys():
+                                k_str = str(key).lower()
+                                if 'materiel' in k_str or 'material' in k_str:
+                                    materiel_val = str(row[key]).strip() if pd.notna(row[key]) else ""
+                                if 'epaisseur' in k_str or 'thickness' in k_str:
+                                    epaisseur_val = str(row[key]).strip() if pd.notna(row[key]) else ""
+
                             items.append({
                                 'part_number': part_num,
                                 'qte_a_produire': qte,
+                                'materiel': materiel_val,
+                                'epaisseur': epaisseur_val,
                                 'source': source_name,
                                 'full_row': row.to_dict()
                             })
@@ -144,8 +159,16 @@ class StockAnalyzer:
         
         return items
 
-    def analyze_item(self, item, df_inventory, source):
+    def analyze_item(self, item, df_inventory, source, enabled_rules=None):
         """Analiza un item individual contra el inventario."""
+        # Default rules if none provided (backward compatibility)
+        if enabled_rules is None:
+            enabled_rules = {
+                'rule_10034': True,
+                'rule_special_parts': True,
+                'rule_external_low': True
+            }
+
         part_number = str(item['part_number']).strip()
         qte_a_produire = item['qte_a_produire']
         
@@ -153,6 +176,8 @@ class StockAnalyzer:
             'origen': source,
             'part_number': part_number,
             'qte_a_produire': qte_a_produire,
+            'materiel': item.get('materiel', ''),
+            'epaisseur': item.get('epaisseur', ''),
             'encontrado_en_inventario': False,
             'stopa_quantity': 0,
             'external_quantity': 0,
@@ -172,34 +197,56 @@ class StockAnalyzer:
                 stopa_qty = df_inventory.at[idx, 'stopaQuantity']
                 external_qty = df_inventory.at[idx, 'externalQuantity']
                 
+                # Extraer Material y Espesor del INVENTARIO (Excel)
+                if 'materialName' in df_inventory.columns:
+                     result['materiel'] = df_inventory.at[idx, 'materialName']
+                if 'gauge' in df_inventory.columns:
+                     result['epaisseur'] = df_inventory.at[idx, 'gauge']
+
                 result['stopa_quantity'] = stopa_qty
                 result['external_quantity'] = external_qty
                 
-                # Reglas de Negocio
-                if part_number == '10034':
+                # Reglas de Negocio Opcionales
+                rule_applied = False
+                
+                # Regla 1: Part # 10034
+                if enabled_rules.get('rule_10034', True) and part_number == '10034':
                     result['clasificacion'] = 'S'
                     result['razon'] = 'Part # especial 10034'
-                elif part_number in ['10089', '10093', '10098', '10016']:
+                    rule_applied = True
+                
+                # Regla 2: Special Parts
+                elif enabled_rules.get('rule_special_parts', True) and part_number in ['10089', '10093', '10098', '10016']:
                     result['clasificacion'] = 'M'
                     result['razon'] = f'Part # especial {part_number}'
-                elif stopa_qty <= 0 and external_qty <= 0:
-                    result['clasificacion'] = 'BO'
-                    result['razon'] = 'Sin stock disponible (BO)'
-                elif stopa_qty <= 0 and (1 <= external_qty <= 2) and external_qty >= qte_a_produire:
+                    rule_applied = True
+                    
+                # Regla 3: Low External Stock (pero no BO absoluto, ese es standard)
+                # Esta regla es específica para cuando hay poco stock externo (1-2) y fuerza Manual?
+                # La lógica original era: stopa <= 0 and (1 <= ext <= 2) and ext >= qte -> M
+                elif enabled_rules.get('rule_external_low', True) and stopa_qty <= 0 and (1 <= external_qty <= 2) and external_qty >= qte_a_produire:
                     result['clasificacion'] = 'M'
                     result['razon'] = f'Stock externo bajo ({external_qty})'
+                    # Consumir stock aunque sea manual? La logica original lo hacía:
                     df_inventory.at[idx, 'externalQuantity'] = external_qty - qte_a_produire
-                elif stopa_qty > 0 and stopa_qty >= qte_a_produire:
-                    result['clasificacion'] = 'A'
-                    result['razon'] = f'Stock interno suficiente'
-                    df_inventory.at[idx, 'stopaQuantity'] = stopa_qty - qte_a_produire
-                elif stopa_qty == 0 and external_qty >= qte_a_produire:
-                    result['clasificacion'] = 'C'
-                    result['razon'] = f'Stock externo suficiente'
-                    df_inventory.at[idx, 'externalQuantity'] = external_qty - qte_a_produire
-                else:
-                    result['clasificacion'] = 'BO' 
-                    result['razon'] = f'Stock insuficiente'
+                    rule_applied = True
+
+                # Lógica Estándar (Fallback si no se aplicó regla o no cumplió condición)
+                if not rule_applied:
+                    if stopa_qty <= 0 and external_qty <= 0:
+                        result['clasificacion'] = 'BO'
+                        result['razon'] = 'Sin stock disponible (BO)'
+                    elif stopa_qty > 0 and stopa_qty >= qte_a_produire:
+                        result['clasificacion'] = 'A'
+                        result['razon'] = f'Stock interno suficiente'
+                        df_inventory.at[idx, 'stopaQuantity'] = stopa_qty - qte_a_produire
+                    elif stopa_qty == 0 and external_qty >= qte_a_produire:
+                        result['clasificacion'] = 'C'
+                        result['razon'] = f'Stock externo suficiente'
+                        df_inventory.at[idx, 'externalQuantity'] = external_qty - qte_a_produire
+                    else:
+                        result['clasificacion'] = 'BO' 
+                        result['razon'] = f'Stock insuficiente'
             else:
                 self.log(f"Item {part_number} no encontrado en inventario.", "warning")
 
@@ -216,11 +263,12 @@ class StockAnalyzer:
             
         return result
 
-    def run_full_analysis(self, punch_data, laser_data, inventory_data=None, metadata=None):
+    def run_full_analysis(self, punch_data, laser_data, inventory_data=None, metadata=None, enabled_rules=None):
         """
         Ejecuta el flujo completo de análisis.
         Si inventory_data es None, intenta usar el existente.
         :param metadata: Diccionario con info extra (project, model, module)
+        :param enabled_rules: Diccionario con reglas activas/inactivas.
         """
         results = []
         
@@ -235,13 +283,13 @@ class StockAnalyzer:
         # 1. Punch
         punch_items = self.extract_pdf_items(punch_data, "Punch")
         for item in punch_items:
-            res = self.analyze_item(item, self.df_inventory_working, "Punch")
+            res = self.analyze_item(item, self.df_inventory_working, "Punch", enabled_rules)
             results.append(res)
             
         # 2. Laser
         laser_items = self.extract_pdf_items(laser_data, "Laser")
         for item in laser_items:
-            res = self.analyze_item(item, self.df_inventory_working, "Laser")
+            res = self.analyze_item(item, self.df_inventory_working, "Laser", enabled_rules)
             results.append(res)
             
         self.last_results = results
@@ -254,7 +302,8 @@ class StockAnalyzer:
             "stats": stats,
             "punch_file": punch_data['file_path'] if punch_data else "N/A",
             "laser_file": laser_data['file_path'] if laser_data else "N/A",
-            "metadata": metadata or {}
+            "metadata": metadata or {},
+            "rules_used": enabled_rules # Guardar qué reglas se usaron
         }
         self.history.append(history_entry)
         
@@ -277,3 +326,61 @@ class StockAnalyzer:
             # Calcular BO explícitamente como el resto o si tiene clasif BO
             'count_bo': sum(1 for r in self.last_results if r.get('clasificacion') == 'BO')
         }
+
+    def get_inventory_summary(self):
+        """
+        Agrupa los resultados por Part Number para mostrar en el tab de Inventario.
+        Calcula total requerido, stock inicial (detectado en el primer uso) y faltante global.
+        """
+        summary_map = {}
+        
+        for res in self.last_results:
+            pn = res['part_number']
+            if not pn: continue
+            
+            qte = res['qte_a_produire']
+            
+            # Obtener stock inicial reportado en la primera aparición de la pieza en este análisis
+            # Nota: Esto asume que el stock reportado en el resultado es el stock DISPONIBLE en ese momento.
+            # Si analizamos secuencialmente, la primera vez que sale el item tiene el stock 'más alto' (antes de consumos de este batch).
+            current_snap_stock = (int(res.get('stopa_quantity', 0)) + int(res.get('external_quantity', 0)))
+            
+            if pn not in summary_map:
+                summary_map[pn] = {
+                    'part_number': pn,
+                    'materiel': res.get('materiel', ''),
+                    'epaisseur': res.get('epaisseur', ''),
+                    'total_required': 0,
+                    'initial_stock': current_snap_stock, # Tomamos el de la primera aparición como "Inicial del Batch"
+                    'missing': 0
+                }
+            
+            summary_map[pn]['total_required'] += qte
+            
+        # Calcular lista final
+        summary_list = []
+        for pn, data in summary_map.items():
+            req = data['total_required']
+            stock = data['initial_stock']
+            missing = req - stock
+            if missing < 0:
+                missing = 0
+            
+            data['missing'] = missing
+            summary_list.append(data)
+            
+        # Ordenar por Part Number de menor a mayor (Numeric aware sort)
+        def sort_key(item):
+            pn = item['part_number']
+            # Intentar separar prefijo/sufijo si es comun, pero lo mas robusto para "menor a mayor"
+            # en numeros es convertir a float. Si falla, usar string.
+            # Para evitar error de comparacion float vs str, devolvemos tupla (tipo, valor)
+            try:
+                val = float(pn)
+                return (0, val)
+            except ValueError:
+                return (1, pn)
+
+        summary_list.sort(key=sort_key)
+        
+        return summary_list

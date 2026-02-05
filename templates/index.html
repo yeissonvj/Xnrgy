@@ -106,6 +106,32 @@
                     </div>
                 </div>
 
+                <div class="rules-section"
+                    style="margin-top: 20px; background: var(--gray-50); padding: 15px; border-radius: 8px; border: 1px solid var(--gray-200);">
+                    <h4 style="margin-bottom: 10px; color: var(--gray-700);">Reglas de Análisis Activas</h4>
+                    <div style="display: flex; flex-direction: column; gap: 8px;">
+                        <label style="display: flex; align-items: start; gap: 10px; cursor: pointer;">
+                            <input type="checkbox" name="rule_10034" value="1" checked
+                                style="margin-top: 3px; width: 16px; height: 16px; flex-shrink: 0;">
+                            <span style="line-height: 1.4;">Regla Part # 10034 (Clasificación 'S')</span>
+                        </label>
+                        <label style="display: flex; align-items: start; gap: 10px; cursor: pointer;">
+                            <input type="checkbox" name="rule_special_parts" value="1" checked
+                                style="margin-top: 3px; width: 16px; height: 16px; flex-shrink: 0;">
+                            <span style="line-height: 1.4;">Regla Partes Especiales (10089, 10093, 10098, 10016 ->
+                                'M')</span>
+                        </label>
+                        <label style="display: flex; align-items: start; gap: 10px; cursor: pointer;">
+                            <input type="checkbox" name="rule_external_low" value="1" checked
+                                style="margin-top: 3px; width: 16px; height: 16px; flex-shrink: 0;">
+                            <span style="line-height: 1.4;">Regla Stock Externo Bajo (1-2 unidades -> 'M')</span>
+                        </label>
+                    </div>
+                    <div style="margin-top: 8px; font-size: 0.8rem; color: var(--secondary);">
+                        * Si se desactiva una regla, el ítem se analizará con lógica estándar (Automatic, Load, BO).
+                    </div>
+                </div>
+
                 <div class="form-actions">
                     <button type="submit" class="btn-primary">Ejecutar Análisis</button>
                 </div>
@@ -153,44 +179,151 @@
             </div>
 
             <div class="actions-right">
-                <button onclick="exportTableToExcel('results_table', 'analisis_stock')" class="btn-secondary">Descargar
-                    Excel</button>
+                <button onclick="downloadExcel()" class="btn-secondary">Descargar Excel (.xlsx)</button>
             </div>
 
-            <div class="table-container">
-                <table class="results_table">
-                    <thead>
-                        <tr>
-                            <th>Origen</th>
-                            <th>Part #</th>
-                            <th>Qté Prod.</th>
-                            <th>Stock Int.</th>
-                            <th>Stock Ext.</th>
-                            <th>Clasif.</th>
-                            <th>Razón</th>
-                            <th>Faltante Auto.</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for row in results %}
-                        <tr class="row-{{ row.clasificacion }}">
-                            <td>{{ row.origen }}</td>
-                            <td class="font-mono">{{ row.part_number }}</td>
-                            <td>{{ row.qte_a_produire }}</td>
-                            <td>{{ row.stopa_quantity | int }}</td>
-                            <td>{{ row.external_quantity | int }}</td>
-                            <td><span class="badge badge-{{ row.clasificacion }}">{{ row.clasificacion }}</span></td>
-                            <td class="text-small">{{ row.razon }}</td>
-                            <td>
-                                {% if row.deficit_internal %}
-                                <span class="badge badge-BO">{{ row.deficit_internal | int }}</span>
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+            <!-- TABS NAVIGATION -->
+            <div class="tabs">
+                <button class="tab-btn active" onclick="openTab(event, 'tab-punch')">Punch</button>
+                <button class="tab-btn" onclick="openTab(event, 'tab-laser')">Laser</button>
+                <button class="tab-btn" onclick="openTab(event, 'tab-inventory')">Inventario</button>
             </div>
+
+            <!-- INVENTORY TAB CONTENT -->
+            <div id="tab-inventory" class="tab-content">
+                <div
+                    style="background: var(--gray-50); padding: 10px; margin-bottom: 15px; border-radius: 6px; border: 1px solid var(--gray-200);">
+                    <strong>Proyecto Actual:</strong>
+                    {% if history and history[-1].metadata %}
+                    {{ history[-1].metadata.project }} ({{ history[-1].metadata.model }})
+                    {% else %}
+                    No definido
+                    {% endif %}
+                </div>
+
+                <div class="table-container">
+                    <table class="results_table">
+                        <thead>
+                            <tr>
+                                <th>Part #</th>
+                                <th>Matériel</th>
+                                <th>Épaisseur</th>
+                                <th>Total a Producir</th>
+                                <th>Stock Total (Disp.)</th>
+                                <th>Faltante (Deficit)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% if inventory_summary %}
+                            {% for item in inventory_summary %}
+                            <tr>
+                                <td class="font-mono" style="font-weight: 600;">{{ item.part_number }}</td>
+                                <td>{{ item.materiel }}</td>
+                                <td>{{ item.epaisseur }}</td>
+                                <td>{{ item.total_required }}</td>
+                                <td>{{ item.initial_stock }}</td>
+                                <td>
+                                    {% if item.missing > 0 %}
+                                    <span class="badge badge-BO">{{ item.missing }}</span>
+                                    {% else %}
+                                    <span class="badge badge-A">0</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                            {% else %}
+                            <tr>
+                                <td colspan="6" style="text-align:center; padding: 20px;">Sin resumen de inventario
+                                    disponible.</td>
+                            </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- PUNCH TAB CONTENT -->
+            <div id="tab-punch" class="tab-content active">
+                <div class="table-container">
+                    <table class="results_table">
+                        <thead>
+                            <tr>
+                                <th>Origen</th>
+                                <th>Part #</th>
+                                <th>Qté Prod.</th>
+                                <th>Stock Int.</th>
+                                <th>Stock Ext.</th>
+                                <th>Clasif.</th>
+                                <th>Razón</th>
+                                <th>Faltante Auto.</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in results %}
+                            {% if row.origen == 'Punch' %}
+                            <tr class="row-{{ row.clasificacion }}">
+                                <td>{{ row.origen }}</td>
+                                <td class="font-mono">{{ row.part_number }}</td>
+                                <td>{{ row.qte_a_produire }}</td>
+                                <td>{{ row.stopa_quantity | int }}</td>
+                                <td>{{ row.external_quantity | int }}</td>
+                                <td><span class="badge badge-{{ row.clasificacion }}">{{ row.clasificacion }}</span>
+                                </td>
+                                <td class="text-small">{{ row.razon }}</td>
+                                <td>
+                                    {% if row.deficit_internal %}
+                                    <span class="badge badge-BO">{{ row.deficit_internal | int }}</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endif %}
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- LASER TAB CONTENT -->
+            <div id="tab-laser" class="tab-content">
+                <div class="table-container">
+                    <table class="results_table">
+                        <thead>
+                            <tr>
+                                <th>Origen</th>
+                                <th>Part #</th>
+                                <th>Qté Prod.</th>
+                                <th>Stock Int.</th>
+                                <th>Stock Ext.</th>
+                                <th>Clasif.</th>
+                                <th>Razón</th>
+                                <th>Faltante Auto.</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in results %}
+                            {% if row.origen == 'Laser' %}
+                            <tr class="row-{{ row.clasificacion }}">
+                                <td>{{ row.origen }}</td>
+                                <td class="font-mono">{{ row.part_number }}</td>
+                                <td>{{ row.qte_a_produire }}</td>
+                                <td>{{ row.stopa_quantity | int }}</td>
+                                <td>{{ row.external_quantity | int }}</td>
+                                <td><span class="badge badge-{{ row.clasificacion }}">{{ row.clasificacion }}</span>
+                                </td>
+                                <td class="text-small">{{ row.razon }}</td>
+                                <td>
+                                    {% if row.deficit_internal %}
+                                    <span class="badge badge-BO">{{ row.deficit_internal | int }}</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endif %}
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
         </div>
         {% endif %}
     </div>
@@ -205,22 +338,38 @@
             });
         });
 
-        function exportTableToExcel(tableClass, filename = 'data') {
-            var downloadLink;
-            var dataType = 'application/vnd.ms-excel';
-            var tableSelect = document.querySelector('.' + tableClass);
-            var tableHTML = tableSelect.outerHTML.replace(/ /g, '%20');
-            filename = filename ? filename + '.xls' : 'excel_data.xls';
-            downloadLink = document.createElement("a");
-            document.body.appendChild(downloadLink);
-            if (navigator.msSaveOrOpenBlob) {
-                var blob = new Blob(['\ufeff', tableHTML], { type: dataType });
-                navigator.msSaveOrOpenBlob(blob, filename);
-            } else {
-                downloadLink.href = 'data:' + dataType + ', ' + tableHTML;
-                downloadLink.download = filename;
-                downloadLink.click();
+        function downloadExcel() {
+            // Identificar qué tab está activa
+            var activeTab = document.querySelector('.tab-content.active');
+            var activeTabId = activeTab ? activeTab.id : 'tab-punch'; // Default fallback
+
+            var exportType = 'punch';
+            if (activeTabId === 'tab-laser') {
+                exportType = 'laser';
+            } else if (activeTabId === 'tab-inventory') {
+                exportType = 'inventory';
+            } else if (activeTabId === 'tab-punch') {
+                exportType = 'punch';
             }
+
+            // Redirigir al endpoint de descarga
+            window.location.href = '/export/' + exportType;
+        }
+
+        function openTab(evt, tabName) {
+            var i, tabcontent, tablinks;
+            tabcontent = document.getElementsByClassName("tab-content");
+            for (i = 0; i < tabcontent.length; i++) {
+                tabcontent[i].style.display = "none";
+                tabcontent[i].classList.remove("active");
+            }
+            tablinks = document.getElementsByClassName("tab-btn");
+            for (i = 0; i < tablinks.length; i++) {
+                tablinks[i].className = tablinks[i].className.replace(" active", "");
+            }
+            document.getElementById(tabName).style.display = "block";
+            document.getElementById(tabName).classList.add("active");
+            evt.currentTarget.className += " active";
         }
     </script>
 </body>

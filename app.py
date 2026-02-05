@@ -6,6 +6,7 @@ from stock_analyzer import StockAnalyzer
 import tempfile
 from dotenv import load_dotenv
 from functools import wraps
+from datetime import datetime
 
 # Cargar variables de entorno
 load_dotenv()
@@ -79,7 +80,8 @@ def index():
         inventory_loaded=inventory_loaded,
         history=history,
         results=current_results, # Resultados actuales si los hay
-        stats=analyzer.get_summary_stats() if current_results else None
+        stats=analyzer.get_summary_stats() if current_results else None,
+        inventory_summary=analyzer.get_inventory_summary() if current_results else None
     )
 
 @app.route('/analyze', methods=['POST'])
@@ -139,8 +141,19 @@ def analyze():
             'model': request.form.get('model', ''),
             'module': request.form.get('module', '')
         }
+        
+        # Capturar reglas de análisis (Checkboxes)
+        # HTML Checkboxes only send key if checked.
+        # Si queremos que por defecto estén activas, el UI debe enviarlas activas.
+        # Asumiremos: si la key está presente -> True, sino -> False (si el usuario las desmarca)
+        # PERO: Para que esto funcione, el UI debe cargarlas marcadas por defecto.
+        enabled_rules = {
+            'rule_10034': 'rule_10034' in request.form,
+            'rule_special_parts': 'rule_special_parts' in request.form,
+            'rule_external_low': 'rule_external_low' in request.form
+        }
              
-        analyzer.run_full_analysis(punch_data, laser_data, inventory_data, metadata)
+        analyzer.run_full_analysis(punch_data, laser_data, inventory_data, metadata, enabled_rules)
         
         flash('Análisis completado exitosamente.')
         return redirect(url_for('index'))
@@ -156,6 +169,88 @@ def reset_stock():
     analyzer.reset()
     flash('Stock y memoria reiniciados correctamente.')
     return redirect(url_for('index'))
+
+@app.route('/export/<export_type>')
+@login_required
+def export_results(export_type):
+    analyzer = get_user_analyzer(session['user'])
+    
+    # Validar que haya datos
+    if not analyzer.last_results:
+        flash("No hay resultados para exportar.")
+        return redirect(url_for('index'))
+
+    import io
+    output = io.BytesIO()
+    
+    # Configurar Pandas Writer
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        
+        # Caso 1: Inventory Summary
+        if export_type == 'inventory':
+            data = analyzer.get_inventory_summary()
+            if not data:
+                flash("No hay resumen de inventario disponible.")
+                return redirect(url_for('index'))
+
+            # Convertir a DataFrame
+            df = pd.DataFrame(data)
+            # Renombrar columnas para el Excel
+            df = df.rename(columns={
+                'part_number': 'Part #',
+                'materiel': 'Matériel',
+                'epaisseur': 'Épaisseur',
+                'total_required': 'Total a Producir',
+                'initial_stock': 'Stock Total (Disp.)',
+                'missing': 'Faltante (Deficit)'
+            })
+            # Asegurar orden de columnas
+            cols = ['Part #', 'Matériel', 'Épaisseur', 'Total a Producir', 'Stock Total (Disp.)', 'Faltante (Deficit)']
+            df = df[cols]
+            
+            df.to_excel(writer, sheet_name='Resumen Inventario', index=False)
+            filename = f"Inventario_Resumen_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            
+        # Caso 2: Punch o Laser (Resultados detallados)
+        elif export_type in ['punch', 'laser']:
+            # Filtrar resultados por origen (Case sensitive en origen: 'Punch', 'Laser')
+            target_origin = export_type.capitalize()
+            filtered_data = [r for r in analyzer.last_results if r['origen'] == target_origin]
+            
+            if not filtered_data:
+                # Si está vacío, crear DF vacío pero con columnas
+                df = pd.DataFrame(columns=['Origen', 'Part #', 'Qté Prod.', 'Stock Int.', 'Stock Ext.', 'Clasif.', 'Razón', 'Faltante Auto.'])
+            else:
+                 # Construir lista de dicts plana para DataFrame
+                clean_rows = []
+                for r in filtered_data:
+                    clean_rows.append({
+                        'Origen': r['origen'],
+                        'Part #': r['part_number'],
+                        'Qté Prod.': r['qte_a_produire'],
+                        'Stock Int.': r['stopa_quantity'],
+                        'Stock Ext.': r['external_quantity'],
+                        'Clasif.': r['clasificacion'],
+                        'Razón': r['razon'],
+                        'Faltante Auto.': r.get('deficit_internal', 0) if r.get('deficit_internal') else ''
+                    })
+                df = pd.DataFrame(clean_rows)
+            
+            df.to_excel(writer, sheet_name=f'Resultados {target_origin}', index=False)
+            filename = f"Resultados_{target_origin}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            
+        else:
+            flash("Tipo de exportación no válido.")
+            return redirect(url_for('index'))
+
+    output.seek(0)
+    
+    return send_file(
+        output,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=filename
+    )
 
 if __name__ == '__main__':
     app.run(debug=True)

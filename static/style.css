@@ -85,6 +85,10 @@ body {
     gap: 15px;
 }
 
+.input-grid>div {
+    min-width: 0;
+}
+
 .file-input-group label {
     display: block;
     font-size: 0.85rem;
@@ -370,6 +374,42 @@ th {
 .badge-None {
     background: #f3f4f6;
     color: #374151;
+}
+
+/* Tabs */
+.tabs {
+    display: flex;
+    gap: 10px;
+    border-bottom: 1px solid var(--gray-200);
+    margin-bottom: 20px;
+}
+
+.tab-btn {
+    padding: 10px 20px;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--gray-700);
+    font-size: 1rem;
+}
+
+.tab-btn:hover {
+    color: var(--primary);
+}
+
+.tab-btn.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
 }
 
 @media (max-width: 768px) {
