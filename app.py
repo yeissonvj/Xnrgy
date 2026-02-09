@@ -89,12 +89,13 @@ def index():
 def analyze():
     # Verificar archivos
     # Punch y Laser siempre requeridos (o al menos uno)
-    if 'punch_file' not in request.files or 'laser_file' not in request.files:
-        flash('Faltan archivos PDF.')
+    if 'punch_file' not in request.files and 'laser_file' not in request.files and 'stopa_file' not in request.files:
+        flash('Faltan archivos para analizar.')
         return redirect(url_for('index'))
 
-    punch_file = request.files['punch_file']
-    laser_file = request.files['laser_file']
+    punch_file = request.files.get('punch_file')
+    laser_file = request.files.get('laser_file')
+    stopa_file = request.files.get('stopa_file')
     inventory_file = request.files.get('inventory_file') # Opcional si ya está cargado
 
     analyzer = get_user_analyzer(session['user'])
@@ -110,20 +111,25 @@ def analyze():
     
     try:
         # Guardar PDFs
-        if punch_file.filename:
+        punch_data = None
+        if punch_file and punch_file.filename:
             punch_path = os.path.join(temp_dir, secure_filename(punch_file.filename))
             punch_file.save(punch_path)
             punch_data = analyzer.load_pdf_data(punch_path, "Punch")
-        else:
-            punch_data = None # Permitir correr sin uno? Asumamos que suben ambos o maneja error
             
-        if laser_file.filename:
+        laser_data = None
+        if laser_file and laser_file.filename:
             laser_path = os.path.join(temp_dir, secure_filename(laser_file.filename))
             laser_file.save(laser_path)
             laser_data = analyzer.load_pdf_data(laser_path, "Laser")
-        else:
-            laser_data = None
             
+        # Cargar Stopa
+        stopa_data = None
+        if stopa_file and stopa_file.filename:
+            stopa_path = os.path.join(temp_dir, secure_filename(stopa_file.filename))
+            stopa_file.save(stopa_path)
+            stopa_data = analyzer.load_stopa_excel(stopa_path)
+
         # Cargar inventario si viene nuevo
         inventory_data = None
         if inventory_file and inventory_file.filename:
@@ -131,8 +137,8 @@ def analyze():
             inventory_file.save(inventory_path)
             inventory_data = analyzer.load_inventory_excel(inventory_path)
         
-        if not punch_data and not laser_data:
-             flash('Debe subir al menos un PDF válido.')
+        if not punch_data and not laser_data and not stopa_data:
+             flash('Debe subir al menos un archivo válido (PDF o Stopa Excel).')
              return redirect(url_for('index'))
         
         # Capturar metadatos del formulario
@@ -143,19 +149,19 @@ def analyze():
         }
         
         # Capturar reglas de análisis (Checkboxes)
-        # HTML Checkboxes only send key if checked.
-        # Si queremos que por defecto estén activas, el UI debe enviarlas activas.
-        # Asumiremos: si la key está presente -> True, sino -> False (si el usuario las desmarca)
-        # PERO: Para que esto funcione, el UI debe cargarlas marcadas por defecto.
         enabled_rules = {
             'rule_10034': 'rule_10034' in request.form,
             'rule_special_parts': 'rule_special_parts' in request.form,
             'rule_external_low': 'rule_external_low' in request.form
         }
              
-        analyzer.run_full_analysis(punch_data, laser_data, inventory_data, metadata, enabled_rules)
+        analyzer.run_full_analysis(punch_data, laser_data, inventory_data, stopa_data, metadata, enabled_rules)
         
-        flash('Análisis completado exitosamente.')
+        if not analyzer.last_results:
+             flash('Análisis completado pero NO se generaron resultados. Verifique que los archivos tengan las columnas correctas (Stopa: "Item", Inventario: "stopaMaterialName").', 'warning')
+        else:
+             flash(f'Análisis completado. {len(analyzer.last_results)} items procesados.')
+             
         return redirect(url_for('index'))
         
     except Exception as e:
@@ -238,6 +244,26 @@ def export_results(export_type):
             
             df.to_excel(writer, sheet_name=f'Resultados {target_origin}', index=False)
             filename = f"Resultados_{target_origin}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        
+        # Caso 3: Stopa
+        elif export_type == 'stopa':
+            filtered_data = [r for r in analyzer.last_results if r['origen'] == 'Stopa']
+            
+            if not filtered_data:
+                 df = pd.DataFrame(columns=['Item (Stopa)', 'Cantidad (Stopa)', 'Part # (Calculado)', 'Part # (Original)'])
+            else:
+                clean_rows = []
+                for r in filtered_data:
+                    clean_rows.append({
+                        'Item (Stopa)': r.get('stopa_item', ''),
+                        'Cantidad (Stopa)': r.get('stopa_quantity', ''),
+                        'Part # (Calculado)': r.get('calculated_part_number', ''),
+                        'Part # (Original)': r.get('original_part', '')
+                    })
+                df = pd.DataFrame(clean_rows)
+            
+            df.to_excel(writer, sheet_name='Análisis Stopa', index=False)
+            filename = f"Resultados_Stopa_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
             
         else:
             flash("Tipo de exportación no válido.")

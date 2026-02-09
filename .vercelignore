@@ -10,6 +10,6 @@ dist/
 build/
 *.spec
 *.exe
-# Exclude uploaded PDFs
 *.pdf
 .vercel
+.git

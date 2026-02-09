@@ -335,14 +335,16 @@ class StockAnalyzer:
         summary_map = {}
         
         for res in self.last_results:
-            pn = res['part_number']
+            # Skip Stopa results or any result without part_number
+            if res.get('origen') == 'Stopa':
+                continue
+                
+            pn = res.get('part_number')
             if not pn: continue
             
             qte = res['qte_a_produire']
             
             # Obtener stock inicial reportado en la primera aparición de la pieza en este análisis
-            # Nota: Esto asume que el stock reportado en el resultado es el stock DISPONIBLE en ese momento.
-            # Si analizamos secuencialmente, la primera vez que sale el item tiene el stock 'más alto' (antes de consumos de este batch).
             current_snap_stock = (int(res.get('stopa_quantity', 0)) + int(res.get('external_quantity', 0)))
             
             if pn not in summary_map:
@@ -351,7 +353,7 @@ class StockAnalyzer:
                     'materiel': res.get('materiel', ''),
                     'epaisseur': res.get('epaisseur', ''),
                     'total_required': 0,
-                    'initial_stock': current_snap_stock, # Tomamos el de la primera aparición como "Inicial del Batch"
+                    'initial_stock': current_snap_stock, 
                     'missing': 0
                 }
             
@@ -369,12 +371,9 @@ class StockAnalyzer:
             data['missing'] = missing
             summary_list.append(data)
             
-        # Ordenar por Part Number de menor a mayor (Numeric aware sort)
+        # Ordenar por Part Number de menor a mayor
         def sort_key(item):
             pn = item['part_number']
-            # Intentar separar prefijo/sufijo si es comun, pero lo mas robusto para "menor a mayor"
-            # en numeros es convertir a float. Si falla, usar string.
-            # Para evitar error de comparacion float vs str, devolvemos tupla (tipo, valor)
             try:
                 val = float(pn)
                 return (0, val)
@@ -384,3 +383,170 @@ class StockAnalyzer:
         summary_list.sort(key=sort_key)
         
         return summary_list
+
+    def load_stopa_excel(self, file_path):
+        """Carga el Excel de reporte Stopa."""
+        try:
+            # Soportar xls y xlsx
+            df = pd.read_excel(file_path)
+            self.log(f"Excel Stopa cargado: {len(df)} filas.", "success")
+            return {
+                'file_path': file_path,
+                'dataframe': df
+            }
+        except Exception as e:
+            self.log(f"Error cargando Excel Stopa: {str(e)}", "error")
+            return None
+
+    def process_stopa_analysis(self, stopa_data, df_inventory):
+        """
+        Cruza la info de Stopa con el Inventario.
+        Criterio: Stopa['Item'] == Inventory['stopaMaterialName']
+        Objetivo: Traer el partNumber del inventario y asignarlo como 'part#' en el resultado.
+        """
+        results = []
+        if not stopa_data or df_inventory is None:
+            return results
+
+        try:
+            df_stopa = stopa_data['dataframe']
+            
+            # Normalizar columnas para evitar problemas de case/espacios
+            df_stopa.columns = [str(c).strip() for c in df_stopa.columns]
+            
+            # Verificar columnas requeridas en Stopa
+            # Se espera: part#, Item, Quantity
+            col_map = {}
+            for c in df_stopa.columns:
+                lower_c = c.lower().strip()
+                if lower_c == 'item': col_map['Item'] = c
+                if 'quantity' in lower_c or 'cantidad' in lower_c: col_map['Quantity'] = c
+                if 'part' in lower_c and '#' in lower_c: col_map['part#'] = c
+            
+            # Si no encontramos las columnas clave, intentamos usar las que hay o fallamos
+            if 'Item' not in col_map:
+                self.log(f"Columna 'Item' no encontrada en archivo Stopa. Columnas detectadas: {list(df_stopa.columns)}", "error")
+                return []
+                
+            stopa_item_col = col_map['Item']
+            
+            # Preparar Inventario para cruce
+            # Verificar si existe columna stopaMaterialName
+            inv_stopa_col = None
+            for c in df_inventory.columns:
+                if str(c).strip() == 'stopaMaterialName':
+                    inv_stopa_col = c
+                    break
+            
+            if not inv_stopa_col:
+                self.log("Columna 'stopaMaterialName' no encontrada en Inventario. No se puede cruzar.", "error")
+                # Devolver datos crudos con aviso? Mejor devolver vacio o error.
+                return []
+
+            # Iterar y cruzar
+            self.log("Iniciando cruce Stopa vs Inventario...", "process")
+            
+            # Crear diccionario de lookup para eficiencia: { stopaMaterialName : partNumber }
+            # Asumimos que stopaMaterialName es único o tomamos el primero?
+            # Si hay duplicados en inventario, tomamos el primero válido.
+            lookup_dict = {}
+            # Filtrar filas vacías
+            valid_inv = df_inventory.dropna(subset=[inv_stopa_col])
+            
+            for idx, row in valid_inv.iterrows():
+                mat_name = str(row[inv_stopa_col]).strip().upper()
+                part_num = str(row['partNumber_normalized']).strip()
+                if mat_name and mat_name not in lookup_dict:
+                    lookup_dict[mat_name] = part_num
+            
+            for idx, row in df_stopa.iterrows():
+                item_name = str(row[stopa_item_col]).strip().upper()
+                
+                # Buscar match
+                matched_part = lookup_dict.get(item_name, "NO MATCH")
+                
+                qty_val = 0
+                if 'Quantity' in col_map:
+                    try:
+                        qty_val = float(row[col_map['Quantity']])
+                    except:
+                        qty_val = 0
+                
+                # Fila original del archivo Stopa (part# original si existe)
+                original_part = ""
+                if 'part#' in col_map:
+                    original_part = str(row[col_map['part#']])
+
+                results.append({
+                    'origen': 'Stopa',
+                    'stopa_item': item_name,     # Item del excel Stopa
+                    'stopa_quantity': qty_val,   # Cantidad del excel Stopa
+                    'original_part': original_part, # Lo que venía en el excel
+                    'calculated_part_number': matched_part, # Lo que encontramos en Inventario (La nueva columna)
+                    'full_row': row.to_dict()
+                })
+                
+            self.log(f"Análisis Stopa completado. {len(results)} items procesados.", "success")
+            
+        except Exception as e:
+            self.log(f"Error procesando Stopa: {str(e)}", "error")
+            
+        return results
+
+    def run_full_analysis(self, punch_data, laser_data, inventory_data=None, stopa_data=None, metadata=None, enabled_rules=None):
+        """
+        Ejecuta el flujo completo de análisis.
+        Si inventory_data es None, intenta usar el existente.
+        """
+        results = []
+        
+        # Inicializar inventario solo si se provee nuevo, sino usa el existente
+        if inventory_data:
+             self.initialize_inventory(inventory_data)
+        
+        if self.df_inventory_working is None:
+            self.log("No hay inventario cargado. Imposible analizar.", "error")
+            return results
+
+        # 1. Punch
+        if punch_data:
+            punch_items = self.extract_pdf_items(punch_data, "Punch")
+            for item in punch_items:
+                res = self.analyze_item(item, self.df_inventory_working, "Punch", enabled_rules)
+                results.append(res)
+            
+        # 2. Laser
+        if laser_data:
+            laser_items = self.extract_pdf_items(laser_data, "Laser")
+            for item in laser_items:
+                res = self.analyze_item(item, self.df_inventory_working, "Laser", enabled_rules)
+                results.append(res)
+        
+        # 3. Stopa (Nuevo)
+        if stopa_data:
+            stopa_results = self.process_stopa_analysis(stopa_data, self.df_inventory_working)
+            results.extend(stopa_results)
+            
+        self.last_results = results
+        
+        # Agregar al historial
+        stats = self.get_summary_stats()
+        
+        # Generar nombres de archivo para log
+        p_name = punch_data['file_path'] if punch_data else "N/A"
+        l_name = laser_data['file_path'] if laser_data else "N/A"
+        s_name = stopa_data['file_path'] if stopa_data else "N/A"
+        
+        history_entry = {
+            "id": len(self.history) + 1,
+            "timestamp": datetime.now().strftime("%H:%M:%S"),
+            "stats": stats,
+            "punch_file": p_name,
+            "laser_file": l_name,
+            "stopa_file": s_name,
+            "metadata": metadata or {},
+            "rules_used": enabled_rules
+        }
+        self.history.append(history_entry)
+        
+        return results
