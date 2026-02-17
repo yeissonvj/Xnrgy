@@ -15,6 +15,7 @@ class StockAnalyzer:
         self.inventory_data = None
         # Inventario de trabajo persistente
         self.df_inventory_working = None
+        self.inventory_data_raw = None # Store raw data for resets
         self.last_results = []
         # Historial de análisis
         self.history = [] 
@@ -31,6 +32,7 @@ class StockAnalyzer:
         self.laser_data = None
         self.inventory_data = None
         self.df_inventory_working = None
+        self.inventory_data_raw = None
         self.last_results = []
         self.history = []
         self.log("Estado del analizador reiniciado.", "warning")
@@ -74,27 +76,104 @@ class StockAnalyzer:
             self.log(f"Error cargando Excel Inventario: {str(e)}", "error")
             return None
 
-    def initialize_inventory(self, inventory_data):
+    def initialize_inventory(self, inventory_data=None, force_reload=True):
         """
-        Inicializa el inventario de trabajo SI NO EXISTE.
-        Si ya existe, se mantiene el actual (con consumos previos).
+        Inicializa el inventario de trabajo.
+        Si inventory_data es None, intenta usar self.inventory_data_raw.
+        Si force_reload es True, reconstruye desde raw data.
         """
-        if self.df_inventory_working is not None:
+        # 1. New data provided
+        if inventory_data:
+            self.inventory_data_raw = inventory_data
+
+        # 2. Use existing working copy if valid and not forced
+        if self.df_inventory_working is not None and not force_reload:
              self.log("Usando inventario existente en memoria.", "info")
              return self.df_inventory_working
 
-        if not inventory_data:
+        # 3. Need to rebuild but no raw data
+        if not self.inventory_data_raw:
             return None
             
-        df_inventory = inventory_data['dataframe']
-        self.df_inventory_working = df_inventory.copy()
+        # 4. Rebuild from raw
+        df_inventory = self.inventory_data_raw['dataframe'].copy()
+        self.df_inventory_working = df_inventory # Reset working copy
         
         # Normalizar y limpiar
         self.df_inventory_working['partNumber_normalized'] = self.df_inventory_working['partNumber'].astype(str).str.strip()
         self.df_inventory_working['stopaQuantity'] = pd.to_numeric(self.df_inventory_working['stopaQuantity'], errors='coerce').fillna(0)
         self.df_inventory_working['externalQuantity'] = pd.to_numeric(self.df_inventory_working['externalQuantity'], errors='coerce').fillna(0)
         
-        self.log("Inventario de trabajo inicializado.", "info")
+
+        # Detectar columnas de dimensiones (Length/Width)
+        # Posibles nombres: 'Longeur (PO)', 'Length', 'Largo'
+        # Posibles nombres: 'Largeur (PO)', 'Width', 'Ancho'
+        length_col = None
+        width_col = None
+        
+        for col in df_inventory.columns:
+            c_lower = str(col).lower().strip()
+            if not length_col and any(x in c_lower for x in ['longeur (po)', 'length']):
+                length_col = col
+            if not width_col and any(x in c_lower for x in ['largeur (po)', 'width']):
+                width_col = col
+                
+        # Normalizar columnas de dimensiones
+        if length_col:
+            self.df_inventory_working['length_val'] = pd.to_numeric(self.df_inventory_working[length_col], errors='coerce').fillna(0)
+        else:
+            self.df_inventory_working['length_val'] = 0
+            
+        if width_col:
+            self.df_inventory_working['width_val'] = pd.to_numeric(self.df_inventory_working[width_col], errors='coerce').fillna(0)
+        else:
+            self.df_inventory_working['width_val'] = 0
+
+        # Limpiar materialType si existe
+        if 'materialType' in self.df_inventory_working.columns:
+            self.df_inventory_working['materialType'] = self.df_inventory_working['materialType'].astype(str).str.strip()
+
+        # Limpiar/Normalizar reservedQuantity si existe
+        if 'reservedQuantity' in self.df_inventory_working.columns:
+             self.df_inventory_working['reservedQuantity'] = pd.to_numeric(self.df_inventory_working['reservedQuantity'], errors='coerce').fillna(0)
+        else:
+             self.df_inventory_working['reservedQuantity'] = 0
+
+        # Limpiar kanban si existe (opcional, se usa as-is)
+        if 'kanban' not in self.df_inventory_working.columns:
+             self.df_inventory_working['kanban'] = 'No'
+
+        # --- EXTENSION: AGREGACIÓN DE DUPLICADOS ---
+        # Si un Part Number aparece varias veces, sumamos stocks y reservado.
+        # Las otras columnas (Dimensiones, Material) se toman del primero.
+        
+        # Identificar columnas numéricas a sumar
+        agg_cols = {'stopaQuantity': 'sum', 'externalQuantity': 'sum', 'reservedQuantity': 'sum'}
+        
+        # Identificar columnas numéricas de dimensiones (tomar maximo o primero? maximo es mas seguro)
+        if 'length_val' in self.df_inventory_working.columns: agg_cols['length_val'] = 'max'
+        if 'width_val' in self.df_inventory_working.columns: agg_cols['width_val'] = 'max'
+        
+        # Todas las demás columnas: 'first'
+        other_cols = [c for c in self.df_inventory_working.columns if c not in agg_cols and c != 'partNumber_normalized']
+        agg_dict = {c: 'first' for c in other_cols}
+        agg_dict.update(agg_cols)
+        
+        try:
+            self.df_inventory_working = self.df_inventory_working.groupby('partNumber_normalized', as_index=False).agg(agg_dict)
+            self.log("Inventario consolidado (duplicados sumados).", "info")
+            
+            # DEBUG: Check after aggregation
+            debug_after = self.df_inventory_working[self.df_inventory_working['partNumber_normalized'] == '15036']
+            if not debug_after.empty:
+                 r = debug_after.iloc[0]
+                 self.log(f"DEBUG: 15036 post-agregación: Stopa={r['stopaQuantity']}, Ext={r['externalQuantity']}", "warning")
+
+        except Exception as e:
+            self.log(f"Error consolidando inventario: {e}", "warning")
+            # Fallback: seguir con duplicados (pero analyze_item solo verá el primero)
+
+        self.log(f"Inventario inicializado. Dimensiones detectadas: L={length_col}, W={width_col}", "info")
         return self.df_inventory_working
 
     def extract_pdf_items(self, pdf_data, source_name):
@@ -200,8 +279,14 @@ class StockAnalyzer:
                 # Extraer Material y Espesor del INVENTARIO (Excel)
                 if 'materialName' in df_inventory.columns:
                      result['materiel'] = df_inventory.at[idx, 'materialName']
+                if 'materialType' in df_inventory.columns:
+                     result['material_type'] = df_inventory.at[idx, 'materialType']
                 if 'gauge' in df_inventory.columns:
                      result['epaisseur'] = df_inventory.at[idx, 'gauge']
+
+                # Extraer Dimensiones (ya normalizadas en initialize_inventory)
+                result['length'] = df_inventory.at[idx, 'length_val']
+                result['width'] = df_inventory.at[idx, 'width_val']
 
                 result['stopa_quantity'] = stopa_qty
                 result['external_quantity'] = external_qty
@@ -245,8 +330,36 @@ class StockAnalyzer:
                         result['razon'] = f'Stock externo suficiente'
                         df_inventory.at[idx, 'externalQuantity'] = external_qty - qte_a_produire
                     else:
-                        result['clasificacion'] = 'BO' 
-                        result['razon'] = f'Stock insuficiente'
+                        # CASO ESPECIAL: Stock Mixto (Interno + Externo cubre la demanda)
+                        if stopa_qty + external_qty >= qte_a_produire:
+                             result['clasificacion'] = 'C'
+                             consumed_ext = qte_a_produire - stopa_qty
+                             result['razon'] = f'Stock Mixto (Int: {stopa_qty}, Ext: {consumed_ext})'
+                             
+                             # Consumir todo el interno
+                             df_inventory.at[idx, 'stopaQuantity'] = 0
+                             # Consumir el resto del externo
+                             df_inventory.at[idx, 'externalQuantity'] = external_qty - consumed_ext
+                             
+                        else:
+                            # Verdadero BO (Ni sumando alcanza)
+                            result['clasificacion'] = 'BO' 
+                            result['razon'] = f'Stock insuficiente'
+                            
+                            # Consumo Parcial para que el siguiente análisis (ej: Laser) vea 0.
+                            # 1. Consumir todo lo que haya en Stopa
+                            consumed_stopa = 0
+                            if stopa_qty > 0:
+                                consumed_stopa = stopa_qty
+                                df_inventory.at[idx, 'stopaQuantity'] = 0 # Deja en 0
+                            
+                            # 2. Si aún falta, ver si hay algo en Externo (aunque no alcance para todo)
+                            remaining_need = qte_a_produire - consumed_stopa
+                            
+                            if remaining_need > 0 and external_qty > 0:
+                                # Consumir lo que haya en externo
+                                consumed_external = min(remaining_need, external_qty)
+                                df_inventory.at[idx, 'externalQuantity'] = external_qty - consumed_external
             else:
                 self.log(f"Item {part_number} no encontrado en inventario.", "warning")
 
@@ -258,56 +371,137 @@ class StockAnalyzer:
                 if balance < 0:
                      result['deficit_internal'] = balance
 
+            # Busqueda de SUSTITUTOS si está en BO y fue encontrado en inventario (tenemos sus datos)
+            if result['clasificacion'] == 'BO' and result['encontrado_en_inventario']:
+                # Calcular cuanto falta realmente
+                # Si deficit_internal existe, es lo que falta. Si no, asumimos que falta todo (qte_a_produire) si no habia stock?
+                # En logica BO, deficit_internal se calcula arriba: balance = stock - qte. Si balance < 0, deficit = balance (negativo)
+                # Queremos la cantidad positiva que falta.
+                missing_qty = 0
+                if result.get('deficit_internal'):
+                    missing_qty = abs(result['deficit_internal'])
+                else:
+                    # Si es BO y no se calculó déficit (raro con mi logica anterior, pero por seguridad)
+                    # Si stock 0, falta todo.
+                    current_stock = result['stopa_quantity'] + result['external_quantity']
+                    missing_qty = result['qte_a_produire'] - current_stock
+                
+                if missing_qty > 0:
+                    substitute_data = self.find_substitute(df_inventory, 
+                                                      result.get('material_type'), 
+                                                      result.get('epaisseur'), 
+                                                      result.get('length', 0), 
+                                                      result.get('width', 0),
+                                                      part_number,
+                                                      missing_qty)
+                    
+                    if substitute_data:
+                        # substitute_data tiene 'index', 'part_number', etc.
+                        sub_idx = substitute_data['index']
+                        
+                        # ACTUALIZAR RESERVA VIRTUAL
+                        # Incrementamos reservedQuantity en el dataframe de trabajo
+                        # para que el siguiente item vea menos stock libre.
+                        current_reserved = df_inventory.at[sub_idx, 'reservedQuantity']
+                        df_inventory.at[sub_idx, 'reservedQuantity'] = current_reserved + missing_qty
+                        
+                        result['possible_substitute'] = substitute_data['part_number']
+                        result['substitute_info'] = substitute_data # Guardar objeto completo
+                        
+                        self.log(f"Asignado sustituto {substitute_data['part_number']} a {part_number}. Reserva aumentada en {missing_qty}", "info")
+
         except Exception as e:
             self.log(f"Error analizando item {part_number}: {str(e)}", "error")
             
         return result
 
-    def run_full_analysis(self, punch_data, laser_data, inventory_data=None, metadata=None, enabled_rules=None):
+    def find_substitute(self, df_inventory, material_type, gauge, req_length, req_width, original_part, needed_qty):
         """
-        Ejecuta el flujo completo de análisis.
-        Si inventory_data es None, intenta usar el existente.
-        :param metadata: Diccionario con info extra (project, model, module)
-        :param enabled_rules: Diccionario con reglas activas/inactivas.
+        Busca un sustituto válido en el inventario.
+        Criterios:
+        - Mismo materialType
+        - Mismo gauge (epaisseur)
+        - Length >= req_length
+        - Width >= req_width
+        - Stock LIBRE (Total - Reservado) >= needed_qty
+        - No ser el mismo item original
         """
-        results = []
-        
-        # Inicializar inventario solo si se provee nuevo, sino usa el existente
-        if inventory_data:
-             self.initialize_inventory(inventory_data)
-        
-        if self.df_inventory_working is None:
-            self.log("No hay inventario cargado. Imposible analizar.", "error")
-            return results
+        try:
+            if not material_type or not gauge:
+                return None
 
-        # 1. Punch
-        punch_items = self.extract_pdf_items(punch_data, "Punch")
-        for item in punch_items:
-            res = self.analyze_item(item, self.df_inventory_working, "Punch", enabled_rules)
-            results.append(res)
+            # 1. Filtrar por Material Type y Gauge
+            # Asegurar tipos
+            g_str = str(gauge).strip().lower()
+            mt_str = str(material_type).strip().lower()
+            required_qty = float(needed_qty) if needed_qty else 0
             
-        # 2. Laser
-        laser_items = self.extract_pdf_items(laser_data, "Laser")
-        for item in laser_items:
-            res = self.analyze_item(item, self.df_inventory_working, "Laser", enabled_rules)
-            results.append(res)
+            # Crear máscara base
+            # Asumimos que las columnas ya fueron normalizadas o limpiadas en initialize_inventory
+            # Pero para asegurar comparacion correcta usamos str.lower()
             
-        self.last_results = results
-        
-        # Agregar al historial
-        stats = self.get_summary_stats()
-        history_entry = {
-            "id": len(self.history) + 1,
-            "timestamp": datetime.now().strftime("%H:%M:%S"),
-            "stats": stats,
-            "punch_file": punch_data['file_path'] if punch_data else "N/A",
-            "laser_file": laser_data['file_path'] if laser_data else "N/A",
-            "metadata": metadata or {},
-            "rules_used": enabled_rules # Guardar qué reglas se usaron
-        }
-        self.history.append(history_entry)
-        
-        return results
+            # Filtro rapido iterando (menos eficiente pandas puro pero más seguro con datos sucios)
+            candidates = []
+            
+            for idx, row in df_inventory.iterrows():
+                # Skip self
+                row_pn = str(row['partNumber_normalized']).strip()
+                if row_pn == str(original_part):
+                    continue
+                
+                # Check Stock
+                st_qty = float(row['stopaQuantity']) if pd.notna(row['stopaQuantity']) else 0
+                ext_qty = float(row['externalQuantity']) if pd.notna(row['externalQuantity']) else 0
+                total_stock = st_qty + ext_qty
+                
+                # Check Reserved
+                reserved_qty = float(row.get('reservedQuantity', 0)) if pd.notna(row.get('reservedQuantity', 0)) else 0
+                
+                # Stock Libre = Total - Reservado
+                free_stock = total_stock - reserved_qty
+                if free_stock < 0: free_stock = 0
+                
+                # El stock del sustituto debe ser suficiente para cubrir lo que falta
+                if free_stock < required_qty:
+                    continue
+                
+                # Check Material & Gauge
+                row_mt = str(row.get('materialType', '')).strip().lower()
+                row_g = str(row.get('gauge', '')).strip().lower()
+                
+                if row_mt != mt_str or row_g != g_str:
+                    continue
+                    
+                # Check Dimensions
+                # Dimensiones del candidato
+                cand_len = float(row.get('length_val', 0))
+                cand_wid = float(row.get('width_val', 0))
+                
+                # Dimensiones requeridas
+                req_l = float(req_length)
+                req_w = float(req_width)
+                
+                if cand_len >= req_l and cand_wid >= req_w:
+                    # Devolver objeto con detalles
+                    kanban_val = str(row.get('kanban', 'No')).strip()
+                    
+                    return {
+                        'index': idx, # IMPORTANTE: Retornar índice para actualizar
+                        'part_number': row_pn,
+                        'kanban': kanban_val,
+                        'reserved': reserved_qty,
+                        'free': free_stock,
+                        'total': total_stock # Optional
+                    }
+            
+            # Si no encontró nada
+            return None
+                
+        except Exception as e:
+            # self.log(f"Error buscando sustituto: {e}", "warning") # Opcional log
+            return None
+
+
 
     def get_summary_stats(self):
         if not self.last_results:
@@ -351,7 +545,10 @@ class StockAnalyzer:
                 summary_map[pn] = {
                     'part_number': pn,
                     'materiel': res.get('materiel', ''),
+                    'material_type': res.get('material_type', ''),
                     'epaisseur': res.get('epaisseur', ''),
+                    'length': res.get('length', 0),
+                    'width': res.get('width', 0),
                     'total_required': 0,
                     'initial_stock': current_snap_stock, 
                     'missing': 0
@@ -465,6 +662,21 @@ class StockAnalyzer:
                 # Buscar match
                 matched_part = lookup_dict.get(item_name, "NO MATCH")
                 
+                # Extraer dimensiones si hubo match (o intentar buscarlas en inventory)
+                length_val = 0
+                width_val = 0
+                
+                if matched_part != "NO MATCH":
+                    # Buscar la fila en inventario que corresponde a este part number
+                    # Como lookup_dict solo guarda el part_number, busquemos en valid_inv
+                    # Nota: Esto podría optimizarse creando un diccionario de datos completo en lugar de solo part_num
+                    # Pero para mantener consistencia con el flujo actual:
+                    mask = valid_inv['partNumber_normalized'] == matched_part
+                    if any(mask):
+                         inv_row = valid_inv.loc[mask].iloc[0]
+                         length_val = inv_row.get('length_val', 0)
+                         width_val = inv_row.get('width_val', 0)
+
                 qty_val = 0
                 if 'Quantity' in col_map:
                     try:
@@ -482,7 +694,9 @@ class StockAnalyzer:
                     'stopa_item': item_name,     # Item del excel Stopa
                     'stopa_quantity': qty_val,   # Cantidad del excel Stopa
                     'original_part': original_part, # Lo que venía en el excel
-                    'calculated_part_number': matched_part, # Lo que encontramos en Inventario (La nueva columna)
+                    'calculated_part_number': matched_part, # Lo que encontramos en Inventario
+                    'length': length_val,
+                    'width': width_val,
                     'full_row': row.to_dict()
                 })
                 
@@ -501,8 +715,11 @@ class StockAnalyzer:
         results = []
         
         # Inicializar inventario solo si se provee nuevo, sino usa el existente
-        if inventory_data:
-             self.initialize_inventory(inventory_data)
+        # Si inventory_data viene, forzamos recarga para asegurar datos frescos
+        # Inicializar inventario
+        # Si inventory_data viene, usamos eso. Si no, usamos None (que triggering uso de raw data almacenada)
+        # En ambos casos force_reload=True para resetear reservas virtuales.
+        self.initialize_inventory(inventory_data, force_reload=True)
         
         if self.df_inventory_working is None:
             self.log("No hay inventario cargado. Imposible analizar.", "error")

@@ -13,3 +13,4 @@ build/
 # Exclude uploaded PDFs
 *.pdf
 .vercel
+.env*.local

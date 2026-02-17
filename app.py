@@ -137,6 +137,11 @@ def analyze():
             inventory_file.save(inventory_path)
             inventory_data = analyzer.load_inventory_excel(inventory_path)
         
+        # Validar: Si no hay data nueva Y no hay inventario en memoria -> Error
+        if not inventory_data and analyzer.df_inventory_working is None:
+            flash('El archivo de Inventario es requerido para el primer análisis o si no hay sesión activa.')
+            return redirect(url_for('index'))
+
         if not punch_data and not laser_data and not stopa_data:
              flash('Debe subir al menos un archivo válido (PDF o Stopa Excel).')
              return redirect(url_for('index'))
@@ -205,13 +210,16 @@ def export_results(export_type):
             df = df.rename(columns={
                 'part_number': 'Part #',
                 'materiel': 'Matériel',
+                'material_type': 'Tipo Material',
                 'epaisseur': 'Épaisseur',
+                'length': 'Length',
+                'width': 'Width',
                 'total_required': 'Total a Producir',
                 'initial_stock': 'Stock Total (Disp.)',
                 'missing': 'Faltante (Deficit)'
             })
             # Asegurar orden de columnas
-            cols = ['Part #', 'Matériel', 'Épaisseur', 'Total a Producir', 'Stock Total (Disp.)', 'Faltante (Deficit)']
+            cols = ['Part #', 'Matériel', 'Tipo Material', 'Épaisseur', 'Length', 'Width', 'Total a Producir', 'Stock Total (Disp.)', 'Faltante (Deficit)']
             df = df[cols]
             
             df.to_excel(writer, sheet_name='Resumen Inventario', index=False)
@@ -225,9 +233,9 @@ def export_results(export_type):
             
             if not filtered_data:
                 # Si está vacío, crear DF vacío pero con columnas
-                df = pd.DataFrame(columns=['Origen', 'Part #', 'Qté Prod.', 'Stock Int.', 'Stock Ext.', 'Clasif.', 'Razón', 'Faltante Auto.'])
+                df = pd.DataFrame(columns=['Origen', 'Part #', 'Qté Prod.', 'Stock Int.', 'Stock Ext.', 'Length', 'Width', 'Clasif.', 'Razón', 'Faltante Auto.', 'Posible Cambio', 'Kanban', 'Reservado', 'Disponible'])
             else:
-                 # Construir lista de dicts plana para DataFrame
+                # Construir lista de dicts plana para DataFrame
                 clean_rows = []
                 for r in filtered_data:
                     clean_rows.append({
@@ -236,9 +244,15 @@ def export_results(export_type):
                         'Qté Prod.': r['qte_a_produire'],
                         'Stock Int.': r['stopa_quantity'],
                         'Stock Ext.': r['external_quantity'],
+                        'Length': r.get('length', 0),
+                        'Width': r.get('width', 0),
                         'Clasif.': r['clasificacion'],
                         'Razón': r['razon'],
-                        'Faltante Auto.': r.get('deficit_internal', 0) if r.get('deficit_internal') else ''
+                        'Faltante Auto.': r.get('deficit_internal', 0) if r.get('deficit_internal') else '',
+                        'Posible Cambio': r.get('possible_substitute', ''),
+                        'Kanban': r.get('substitute_info', {}).get('kanban', '') if r.get('substitute_info') else '',
+                        'Reservado': r.get('substitute_info', {}).get('reserved', '') if r.get('substitute_info') else '',
+                        'Disponible': r.get('substitute_info', {}).get('free', '') if r.get('substitute_info') else ''
                     })
                 df = pd.DataFrame(clean_rows)
             
@@ -258,7 +272,9 @@ def export_results(export_type):
                         'Item (Stopa)': r.get('stopa_item', ''),
                         'Cantidad (Stopa)': r.get('stopa_quantity', ''),
                         'Part # (Calculado)': r.get('calculated_part_number', ''),
-                        'Part # (Original)': r.get('original_part', '')
+                        'Part # (Original)': r.get('original_part', ''),
+                        'Length': r.get('length', 0),
+                        'Width': r.get('width', 0)
                     })
                 df = pd.DataFrame(clean_rows)
             

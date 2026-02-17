@@ -117,12 +117,12 @@
                     <h4 style="margin-bottom: 10px; color: var(--gray-700);">Reglas de Análisis Activas</h4>
                     <div style="display: flex; flex-direction: column; gap: 8px;">
                         <label style="display: flex; align-items: start; gap: 10px; cursor: pointer;">
-                            <input type="checkbox" name="rule_10034" value="1" checked
+                            <input type="checkbox" name="rule_10034" value="1"
                                 style="margin-top: 3px; width: 16px; height: 16px; flex-shrink: 0;">
                             <span style="line-height: 1.4;">Regla Part # 10034 (Clasificación 'S')</span>
                         </label>
                         <label style="display: flex; align-items: start; gap: 10px; cursor: pointer;">
-                            <input type="checkbox" name="rule_special_parts" value="1" checked
+                            <input type="checkbox" name="rule_special_parts" value="1"
                                 style="margin-top: 3px; width: 16px; height: 16px; flex-shrink: 0;">
                             <span style="line-height: 1.4;">Regla Partes Especiales (10089, 10093, 10098, 10016 ->
                                 'M')</span>
@@ -214,7 +214,10 @@
                             <tr>
                                 <th>Part #</th>
                                 <th>Matériel</th>
+                                <th>Tipo Material</th>
                                 <th>Épaisseur</th>
+                                <th>Length</th>
+                                <th>Width</th>
                                 <th>Total a Producir</th>
                                 <th>Stock Total (Disp.)</th>
                                 <th>Faltante (Deficit)</th>
@@ -226,7 +229,10 @@
                             <tr>
                                 <td class="font-mono" style="font-weight: 600;">{{ item.part_number }}</td>
                                 <td>{{ item.materiel }}</td>
+                                <td>{{ item.material_type }}</td>
                                 <td>{{ item.epaisseur }}</td>
+                                <td>{{ item.length }}</td>
+                                <td>{{ item.width }}</td>
                                 <td>{{ item.total_required }}</td>
                                 <td>{{ item.initial_stock }}</td>
                                 <td>
@@ -263,6 +269,10 @@
                                 <th>Clasif.</th>
                                 <th>Razón</th>
                                 <th>Faltante Auto.</th>
+                                <th>Posible Cambio</th>
+                                <th>Kanban</th>
+                                <th>Reservado</th>
+                                <th>Disponible</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -280,6 +290,26 @@
                                 <td>
                                     {% if row.deficit_internal %}
                                     <span class="badge badge-BO">{{ row.deficit_internal | int }}</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if row.possible_substitute %}
+                                    <span class="badge badge-Alt">{{ row.possible_substitute }}</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if row.substitute_info %}
+                                    {{ row.substitute_info.kanban }}
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if row.substitute_info %}
+                                    {{ row.substitute_info.reserved | int }}
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if row.substitute_info %}
+                                    {{ row.substitute_info.free | int }}
                                     {% endif %}
                                 </td>
                             </tr>
@@ -304,6 +334,10 @@
                                 <th>Clasif.</th>
                                 <th>Razón</th>
                                 <th>Faltante Auto.</th>
+                                <th>Posible Cambio</th>
+                                <th>Kanban</th>
+                                <th>Reservado</th>
+                                <th>Disponible</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -323,6 +357,26 @@
                                     <span class="badge badge-BO">{{ row.deficit_internal | int }}</span>
                                     {% endif %}
                                 </td>
+                                <td>
+                                    {% if row.possible_substitute %}
+                                    <span class="badge badge-Alt">{{ row.possible_substitute }}</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if row.substitute_info %}
+                                    {{ row.substitute_info.kanban }}
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if row.substitute_info %}
+                                    {{ row.substitute_info.reserved | int }}
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if row.substitute_info %}
+                                    {{ row.substitute_info.free | int }}
+                                    {% endif %}
+                                </td>
                             </tr>
                             {% endif %}
                             {% endfor %}
@@ -340,6 +394,8 @@
                                 <th>Item (Original)</th>
                                 <th>Part # (Stopa Orig.)</th>
                                 <th>Part # (Calculado/Inv)</th>
+                                <th>Length</th>
+                                <th>Width</th>
                                 <th>Quantity</th>
                             </tr>
                         </thead>
@@ -352,6 +408,8 @@
                                 <td class="font-mono" style="font-weight: 700; color: var(--primary);">
                                     {{ row.calculated_part_number }}
                                 </td>
+                                <td>{{ row.length }}</td>
+                                <td>{{ row.width }}</td>
                                 <td>{{ row.stopa_quantity }}</td>
                             </tr>
                             {% endif %}
