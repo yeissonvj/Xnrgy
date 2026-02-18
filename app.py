@@ -16,6 +16,17 @@ app = Flask(__name__)
 app.secret_key = os.getenv('FLASK_SECRET_KEY', 'default_secret_key') 
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 
+@app.after_request
+def add_header(response):
+    """
+    Add headers to both force latest IE rendering engine or Chrome Frame,
+    and also to cache the rendered page for 10 minutes.
+    """
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
 # Credenciales
 ADMIN_USER = os.getenv('FLASK_USER')
 ADMIN_PASS = os.getenv('FLASK_PASSWORD')
