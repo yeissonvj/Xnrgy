@@ -717,9 +717,10 @@ class StockAnalyzer:
         # Inicializar inventario solo si se provee nuevo, sino usa el existente
         # Si inventory_data viene, forzamos recarga para asegurar datos frescos
         # Inicializar inventario
-        # Si inventory_data viene, usamos eso. Si no, usamos None (que triggering uso de raw data almacenada)
-        # En ambos casos force_reload=True para resetear reservas virtuales.
-        self.initialize_inventory(inventory_data, force_reload=True)
+        # Si inventory_data viene, usamos eso y forzamos recarga (force_reload=True).
+        # Si no viene (analisis acumulativo), force_reload=False para seguir consumiendo el mismo stock.
+        should_reload = (inventory_data is not None)
+        self.initialize_inventory(inventory_data, force_reload=should_reload)
         
         if self.df_inventory_working is None:
             self.log("No hay inventario cargado. Imposible analizar.", "error")
