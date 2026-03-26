@@ -14,7 +14,7 @@ load_dotenv()
 app = Flask(__name__)
 # Usar clave secreta del .env
 app.secret_key = os.getenv('FLASK_SECRET_KEY', 'default_secret_key') 
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024  # 32 MB para múltiples archivos
 
 @app.after_request
 def add_header(response):
@@ -86,34 +86,56 @@ def index():
     history = analyzer.history
     current_results = analyzer.last_results
     
+    # Calcular etiquetas únicas de PDFs por tipo para sub-pestañas
+    punch_pdf_labels = []
+    laser_pdf_labels = []
+    if current_results:
+        seen_p = set()
+        seen_l = set()
+        for r in current_results:
+            label = r.get('pdf_label', '')
+            origen = r.get('origen', '')
+            if origen == 'Punch' and label not in seen_p:
+                punch_pdf_labels.append(label)
+                seen_p.add(label)
+            elif origen == 'Laser' and label not in seen_l:
+                laser_pdf_labels.append(label)
+                seen_l.add(label)
+    
     return render_template(
         'index.html',
         inventory_loaded=inventory_loaded,
         history=history,
-        results=current_results, # Resultados actuales si los hay
+        results=current_results,
         stats=analyzer.get_summary_stats() if current_results else None,
-        inventory_summary=analyzer.get_inventory_summary() if current_results else None
+        inventory_summary=analyzer.get_inventory_summary() if current_results else None,
+        punch_pdf_labels=punch_pdf_labels,
+        laser_pdf_labels=laser_pdf_labels,
     )
 
 @app.route('/analyze', methods=['POST'])
 @login_required
 def analyze():
-    # Verificar archivos
-    # Punch y Laser siempre requeridos (o al menos uno)
-    if 'punch_file' not in request.files and 'laser_file' not in request.files and 'stopa_file' not in request.files:
-        flash('Faltan archivos para analizar.')
-        return redirect(url_for('index'))
-
-    punch_file = request.files.get('punch_file')
-    laser_file = request.files.get('laser_file')
+    # Obtener todos los archivos Punch (puede haber varios con el mismo campo 'punch_files')
+    punch_files_uploaded = request.files.getlist('punch_files')
+    laser_files_uploaded = request.files.getlist('laser_files')
     stopa_file = request.files.get('stopa_file')
-    inventory_file = request.files.get('inventory_file') # Opcional si ya está cargado
+    inventory_file = request.files.get('inventory_file')
+    priority = request.form.get('priority_machine', None)  # 'punch', 'laser', o None (sin prioridad)
+
+    # Filtrar archivos vacíos
+    punch_files_uploaded = [f for f in punch_files_uploaded if f and f.filename]
+    laser_files_uploaded = [f for f in laser_files_uploaded if f and f.filename]
 
     analyzer = get_user_analyzer(session['user'])
 
+    # Validar: necesitamos al menos un PDF
+    if not punch_files_uploaded and not laser_files_uploaded and (not stopa_file or not stopa_file.filename):
+        flash('Debe subir al menos un archivo PDF (Punch o Laser) para analizar.')
+        return redirect(url_for('index'))
+
     # Validar inventario
     inventory_needed = analyzer.df_inventory_working is None
-    
     if inventory_needed and (not inventory_file or inventory_file.filename == ''):
         flash('El archivo de Inventario es requerido para el primer análisis.')
         return redirect(url_for('index'))
@@ -121,19 +143,24 @@ def analyze():
     temp_dir = tempfile.mkdtemp()
     
     try:
-        # Guardar PDFs
-        punch_data = None
-        if punch_file and punch_file.filename:
-            punch_path = os.path.join(temp_dir, secure_filename(punch_file.filename))
-            punch_file.save(punch_path)
-            punch_data = analyzer.load_pdf_data(punch_path, "Punch")
-            
-        laser_data = None
-        if laser_file and laser_file.filename:
-            laser_path = os.path.join(temp_dir, secure_filename(laser_file.filename))
-            laser_file.save(laser_path)
-            laser_data = analyzer.load_pdf_data(laser_path, "Laser")
-            
+        # Guardar y cargar PDFs de Punch
+        punch_data_list = []
+        for f in punch_files_uploaded:
+            path = os.path.join(temp_dir, secure_filename(f.filename))
+            f.save(path)
+            data = analyzer.load_pdf_data(path, "Punch")
+            if data:
+                punch_data_list.append(data)
+
+        # Guardar y cargar PDFs de Laser
+        laser_data_list = []
+        for f in laser_files_uploaded:
+            path = os.path.join(temp_dir, secure_filename(f.filename))
+            f.save(path)
+            data = analyzer.load_pdf_data(path, "Laser")
+            if data:
+                laser_data_list.append(data)
+
         # Cargar Stopa
         stopa_data = None
         if stopa_file and stopa_file.filename:
@@ -153,7 +180,7 @@ def analyze():
             flash('El archivo de Inventario es requerido para el primer análisis o si no hay sesión activa.')
             return redirect(url_for('index'))
 
-        if not punch_data and not laser_data and not stopa_data:
+        if not punch_data_list and not laser_data_list and not stopa_data:
              flash('Debe subir al menos un archivo válido (PDF o Stopa Excel).')
              return redirect(url_for('index'))
         
@@ -171,12 +198,24 @@ def analyze():
             'rule_external_low': 'rule_external_low' in request.form
         }
              
-        analyzer.run_full_analysis(punch_data, laser_data, inventory_data, stopa_data, metadata, enabled_rules)
+        analyzer.run_full_analysis(
+            punch_data_list,
+            laser_data_list,
+            inventory_data,
+            stopa_data,
+            metadata,
+            enabled_rules,
+            priority=priority
+        )
         
         if not analyzer.last_results:
              flash('Análisis completado pero NO se generaron resultados. Verifique que los archivos tengan las columnas correctas (Stopa: "Item", Inventario: "stopaMaterialName").', 'warning')
         else:
-             flash(f'Análisis completado. {len(analyzer.last_results)} items procesados.')
+             total = len(analyzer.last_results)
+             punch_count = sum(1 for r in analyzer.last_results if r.get('origen') == 'Punch')
+             laser_count = sum(1 for r in analyzer.last_results if r.get('origen') == 'Laser')
+             priority_msg = f'Prioridad: {priority.capitalize()}.' if priority else 'Sin prioridad (análisis intercalado).'
+             flash(f'Análisis completado. {total} items procesados — Punch: {punch_count}, Laser: {laser_count}. {priority_msg}')
              
         return redirect(url_for('index'))
         
@@ -236,20 +275,18 @@ def export_results(export_type):
             df.to_excel(writer, sheet_name='Resumen Inventario', index=False)
             filename = f"Inventario_Resumen_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
             
-        # Caso 2: Punch o Laser (Resultados detallados)
+        # Caso 2: Punch o Laser (Resultados detallados — todas las sub-pestañas combinadas)
         elif export_type in ['punch', 'laser']:
-            # Filtrar resultados por origen (Case sensitive en origen: 'Punch', 'Laser')
             target_origin = export_type.capitalize()
             filtered_data = [r for r in analyzer.last_results if r['origen'] == target_origin]
             
             if not filtered_data:
-                # Si está vacío, crear DF vacío pero con columnas
-                df = pd.DataFrame(columns=['Origen', 'Part #', 'Qté Prod.', 'Stock Int.', 'Stock Ext.', 'Length', 'Width', 'Clasif.', 'Razón', 'Faltante Auto.', 'Posible Cambio', 'Kanban', 'Reservado', 'Disponible'])
+                df = pd.DataFrame(columns=['PDF', 'Origen', 'Part #', 'Qté Prod.', 'Stock Int.', 'Stock Ext.', 'Length', 'Width', 'Clasif.', 'Razón', 'Faltante Auto.', 'Posible Cambio', 'Kanban', 'Reservado', 'Disponible'])
             else:
-                # Construir lista de dicts plana para DataFrame
                 clean_rows = []
                 for r in filtered_data:
                     clean_rows.append({
+                        'PDF': r.get('pdf_label', ''),
                         'Origen': r['origen'],
                         'Part #': r['part_number'],
                         'Qté Prod.': r['qte_a_produire'],

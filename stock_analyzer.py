@@ -707,18 +707,23 @@ class StockAnalyzer:
             
         return results
 
-    def run_full_analysis(self, punch_data, laser_data, inventory_data=None, stopa_data=None, metadata=None, enabled_rules=None):
+    def run_full_analysis(self, punch_files, laser_files, inventory_data=None, stopa_data=None, metadata=None, enabled_rules=None, priority=None):
         """
         Ejecuta el flujo completo de análisis.
-        Si inventory_data es None, intenta usar el existente.
+        
+        :param punch_files: Lista de dicts con datos PDF de Punch (puede ser lista vacía)
+        :param laser_files: Lista de dicts con datos PDF de Laser (puede ser lista vacía)
+        :param inventory_data: Datos de Excel de inventario (opcional si ya hay uno en memoria)
+        :param stopa_data: Datos de Excel Stopa (opcional)
+        :param metadata: Metadatos del proyecto
+        :param enabled_rules: Reglas de análisis activas
+        :param priority: 'punch', 'laser' o None (sin prioridad → intercalado)
+        
+        Retorna: Lista plana de resultados, cada uno con 'pdf_label' identificando el origen.
         """
         results = []
         
         # Inicializar inventario solo si se provee nuevo, sino usa el existente
-        # Si inventory_data viene, forzamos recarga para asegurar datos frescos
-        # Inicializar inventario
-        # Si inventory_data viene, usamos eso y forzamos recarga (force_reload=True).
-        # Si no viene (analisis acumulativo), force_reload=False para seguir consumiendo el mismo stock.
         should_reload = (inventory_data is not None)
         self.initialize_inventory(inventory_data, force_reload=should_reload)
         
@@ -726,23 +731,81 @@ class StockAnalyzer:
             self.log("No hay inventario cargado. Imposible analizar.", "error")
             return results
 
-        # 1. Punch
-        if punch_data:
-            punch_items = self.extract_pdf_items(punch_data, "Punch")
-            for item in punch_items:
-                res = self.analyze_item(item, self.df_inventory_working, "Punch", enabled_rules)
-                results.append(res)
-            
-        # 2. Laser
-        if laser_data:
-            laser_items = self.extract_pdf_items(laser_data, "Laser")
-            for item in laser_items:
-                res = self.analyze_item(item, self.df_inventory_working, "Laser", enabled_rules)
-                results.append(res)
-        
-        # 3. Stopa (Nuevo)
+        # Determinar el orden de procesamiento según prioridad
+        punch_entries = [(pdf, 'Punch') for pdf in punch_files if pdf]
+        laser_entries = [(pdf, 'Laser') for pdf in laser_files if pdf]
+
+        if priority == 'punch':
+            # Punch completo primero, luego Laser completo
+            ordered_entries = [('Punch', punch_entries), ('Laser', laser_entries)]
+            processing_list = [
+                (pdf_data, source)
+                for group_name, entries in ordered_entries
+                for pdf_data, source in entries
+            ]
+        elif priority == 'laser':
+            # Laser completo primero, luego Punch completo
+            ordered_entries = [('Laser', laser_entries), ('Punch', punch_entries)]
+            processing_list = [
+                (pdf_data, source)
+                for group_name, entries in ordered_entries
+                for pdf_data, source in entries
+            ]
+        else:
+            # Sin prioridad: intercalar por índice (punch0, laser0, punch1, laser1, ...)
+            max_len = max(len(punch_entries), len(laser_entries)) if (punch_entries or laser_entries) else 0
+            processing_list = []
+            for i in range(max_len):
+                if i < len(punch_entries):
+                    processing_list.append(punch_entries[i])
+                if i < len(laser_entries):
+                    processing_list.append(laser_entries[i])
+
+        # Guardar el orden de archivos para reordenar la salida al final
+        file_order = []
+        for pdf_data, source in processing_list:
+            import os
+            filename = os.path.basename(pdf_data.get('file_path', ''))
+            pdf_label = filename if filename else f"{source}_pdf"
+            file_order.append(pdf_label)
+
+        results_by_file = {}  # pdf_label -> lista de resultados (en orden de cantidades)
+
+        for pdf_data, source_label in processing_list:
+            import os
+            filename = os.path.basename(pdf_data.get('file_path', ''))
+            pdf_label = filename if filename else f"{source_label}_pdf"
+
+            self.log(f"Procesando {source_label}: {pdf_label}", "process")
+            items = self.extract_pdf_items(pdf_data, source_label)
+
+            # --- REGLA DE PRIORIDAD POR CANTIDAD PEQUEÑA ---
+            # Cuando un mismo part_number aparece varias veces en el PDF,
+            # se ordenan sus requisiciones de MENOR a MAYOR qte_a_produire.
+            # Esto garantiza que con stock limitado se cumplen primero los
+            # pedidos más pequeños (maximizando el número de requisiciones cubiertas).
+            items_sorted = sorted(items, key=lambda x: (x['part_number'], x['qte_a_produire']))
+
+            file_results = []
+            for item in items_sorted:
+                res = self.analyze_item(item, self.df_inventory_working, source_label, enabled_rules)
+                res['pdf_label'] = pdf_label
+                file_results.append(res)
+
+            results_by_file[pdf_label] = file_results
+
+        # Reordenar la salida según el orden original de los archivos subidos.
+        # Cada archivo mantiene su bloque de resultados (orden de aparición en el PDF),
+        # pero el orden entre archivos sigue el orden de subida del usuario.
+        for pdf_label in file_order:
+            if pdf_label in results_by_file:
+                results.extend(results_by_file[pdf_label])
+
+        # Stopa (no tiene prioridad, se procesa al final)
         if stopa_data:
             stopa_results = self.process_stopa_analysis(stopa_data, self.df_inventory_working)
+            for r in stopa_results:
+                r['pdf_label'] = 'Stopa'
             results.extend(stopa_results)
             
         self.last_results = results
@@ -751,19 +814,20 @@ class StockAnalyzer:
         stats = self.get_summary_stats()
         
         # Generar nombres de archivo para log
-        p_name = punch_data['file_path'] if punch_data else "N/A"
-        l_name = laser_data['file_path'] if laser_data else "N/A"
+        p_names = [p.get('file_path', 'N/A') for p in punch_files if p]
+        l_names = [l.get('file_path', 'N/A') for l in laser_files if l]
         s_name = stopa_data['file_path'] if stopa_data else "N/A"
         
         history_entry = {
             "id": len(self.history) + 1,
             "timestamp": datetime.now().strftime("%H:%M:%S"),
             "stats": stats,
-            "punch_file": p_name,
-            "laser_file": l_name,
+            "punch_files": p_names,
+            "laser_files": l_names,
             "stopa_file": s_name,
             "metadata": metadata or {},
-            "rules_used": enabled_rules
+            "rules_used": enabled_rules,
+            "priority": priority
         }
         self.history.append(history_entry)
         

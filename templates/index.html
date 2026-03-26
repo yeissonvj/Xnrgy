@@ -48,50 +48,92 @@
 
         <!-- UPLOAD FORM -->
         <div class="card form-card">
-            <form action="/analyze" method="post" enctype="multipart/form-data" class="upload-form">
+            <form action="/analyze" method="post" enctype="multipart/form-data" class="upload-form" id="mainForm">
 
-                <!-- METADATA INPUTS -->
-                <h4 style="margin-bottom: 15px; color: var(--gray-700);">Información del Proyecto</h4>
-                <div class="input-grid" style="margin-bottom: 20px;">
-                    <div class="form-group">
-                        <label for="project">No. Proyecto</label>
-                        <input type="text" name="project" id="project" class="form-control" placeholder="Ej: 12345"
-                            required>
-                    </div>
-                    <div class="form-group">
-                        <label for="model">Modelo</label>
-                        <input type="text" name="model" id="model" class="form-control" placeholder="Ej: XN-200"
-                            required>
-                    </div>
-                    <div class="form-group">
-                        <label for="module">Módulo</label>
-                        <input type="text" name="module" id="module" class="form-control" placeholder="Ej: Mod-A"
-                            required>
+                <!-- METADATA INPUTS (campos opcionales eliminados - no requeridos con multi-PDF) -->
+
+                <!-- PRIORIDAD DE MÁQUINA -->
+                <div class="priority-section">
+                    <h4 style="margin-bottom: 10px; color: var(--gray-700);">Prioridad de Inventario <span style="font-weight:400; font-size:0.82rem; color:var(--secondary);">(opcional)</span></h4>
+                    <p class="priority-desc">Si se activa, la máquina seleccionada consumirá el inventario primero. Sin selección, el análisis se intercala por archivo (Punch1 → Laser1 → Punch2 → Laser2…).</p>
+                    <div class="radio-group">
+                        <label class="radio-option" id="label-priority-punch">
+                            <input type="checkbox" name="priority_machine" value="punch" id="priority-punch" onchange="handlePriorityCheck('punch')">
+                            <span class="radio-custom"></span>
+                            <span class="radio-text">
+                                <strong>Punch</strong>
+                                <small>Prioridad al Punch</small>
+                            </span>
+                        </label>
+                        <label class="radio-option" id="label-priority-laser">
+                            <input type="checkbox" name="priority_machine" value="laser" id="priority-laser" onchange="handlePriorityCheck('laser')">
+                            <span class="radio-custom"></span>
+                            <span class="radio-text">
+                                <strong>Laser</strong>
+                                <small>Prioridad al Laser</small>
+                            </span>
+                        </label>
                     </div>
                 </div>
 
+                <!-- ARCHIVOS PDF Y EXCEL -->
+                <h4 style="margin-bottom: 15px; margin-top: 20px; color: var(--gray-700);">Archivos</h4>
 
+                <!-- FILA SUPERIOR: Punch + Laser (lado a lado) -->
+                <div class="pdf-upload-row">
 
-                <h4 style="margin-bottom: 15px; color: var(--gray-700);">Archivos</h4>
-                <div class="input-grid">
-                    <div class="file-input-group">
-                        <label for="punch_file">PDF Punch</label>
-                        <div class="custom-file-input">
-                            <input type="file" name="punch_file" id="punch_file" accept=".pdf">
-                            <span class="file-name">Seleccionar...</span>
-                            <button type="button" class="btn-browse">Explorar</button>
+                    <!-- PDF PUNCH -->
+                    <div class="pdf-upload-col">
+                        <div class="machine-upload-card punch-card">
+                            <div class="machine-card-header">
+                                <span class="machine-icon">⚡</span>
+                                <span class="machine-title">PDF Punch</span>
+                                <span class="machine-badge">1 a varios archivos</span>
+                            </div>
+                            <div class="custom-file-input" id="punch-drop-zone">
+                                <input type="file" name="punch_files" id="punch_file" accept=".pdf" multiple onchange="handleFileAdd('punch', this)">
+                                <span class="file-name" id="punch-placeholder">Seleccionar PDF(s)...</span>
+                                <button type="button" class="btn-browse">Explorar</button>
+                            </div>
+                            <!-- Listbox de archivos Punch seleccionados -->
+                            <div class="file-listbox-wrapper" id="punch-list-wrapper" style="display:none;">
+                                <div class="file-listbox-header">
+                                    <span>Archivos seleccionados:</span>
+                                    <button type="button" class="btn-clear-list" onclick="clearFileList('punch')">✕ Limpiar</button>
+                                </div>
+                                <ul class="file-listbox" id="punch-file-list"></ul>
+                            </div>
                         </div>
                     </div>
 
-                    <div class="file-input-group">
-                        <label for="laser_file">PDF Laser</label>
-                        <div class="custom-file-input">
-                            <input type="file" name="laser_file" id="laser_file" accept=".pdf">
-                            <span class="file-name">Seleccionar...</span>
-                            <button type="button" class="btn-browse">Explorar</button>
+                    <!-- PDF LASER -->
+                    <div class="pdf-upload-col">
+                        <div class="machine-upload-card laser-card">
+                            <div class="machine-card-header">
+                                <span class="machine-icon">🔴</span>
+                                <span class="machine-title">PDF Laser</span>
+                                <span class="machine-badge">1 a varios archivos</span>
+                            </div>
+                            <div class="custom-file-input" id="laser-drop-zone">
+                                <input type="file" name="laser_files" id="laser_file" accept=".pdf" multiple onchange="handleFileAdd('laser', this)">
+                                <span class="file-name" id="laser-placeholder">Seleccionar PDF(s)...</span>
+                                <button type="button" class="btn-browse">Explorar</button>
+                            </div>
+                            <!-- Listbox de archivos Laser seleccionados -->
+                            <div class="file-listbox-wrapper" id="laser-list-wrapper" style="display:none;">
+                                <div class="file-listbox-header">
+                                    <span>Archivos seleccionados:</span>
+                                    <button type="button" class="btn-clear-list" onclick="clearFileList('laser')">✕ Limpiar</button>
+                                </div>
+                                <ul class="file-listbox" id="laser-file-list"></ul>
+                            </div>
                         </div>
                     </div>
 
+                </div>
+
+                <!-- FILA INFERIOR: Inventario + Stopa -->
+                <div class="input-grid" style="margin-top: 15px;">
                     <div class="file-input-group">
                         <label for="inventory_file">Excel Inventario</label>
                         <div class="custom-file-input">
@@ -100,6 +142,9 @@
                             <span class="file-name">Seleccionar...</span>
                             <button type="button" class="btn-browse">Explorar</button>
                         </div>
+                        {% if inventory_loaded %}
+                        <small style="color: var(--success); font-size: 0.78rem; margin-top: 4px; display:block;">✓ Inventario en memoria (opcional recargar)</small>
+                        {% endif %}
                     </div>
 
                     <div class="file-input-group">
@@ -154,11 +199,10 @@
                     <div class="hl-header">Análisis {{ entry.id }} <span class="hl-time">{{ entry.timestamp }}</span>
                     </div>
 
-                    {% if entry.metadata and (entry.metadata.project or entry.metadata.model) %}
-                    <div class="hl-meta">
-                        <strong>Prj:</strong> {{ entry.metadata.project }} |
-                        <strong>Mod:</strong> {{ entry.metadata.model }} |
-                        <strong>Mód:</strong> {{ entry.metadata.module }}
+
+                    {% if entry.priority %}
+                    <div class="hl-meta" style="color: var(--primary); font-size:0.75rem;">
+                        Prioridad: {{ entry.priority | capitalize }}
                     </div>
                     {% endif %}
                     <div class="hl-stats">
@@ -188,25 +232,16 @@
                 <button onclick="downloadExcel()" class="btn-secondary">Descargar Excel (.xlsx)</button>
             </div>
 
-            <!-- TABS NAVIGATION -->
-            <div class="tabs">
-                <button class="tab-btn active" onclick="openTab(event, 'tab-punch')">Punch</button>
-                <button class="tab-btn" onclick="openTab(event, 'tab-laser')">Laser</button>
+            <!-- TABS NAVIGATION (principales) -->
+            <div class="tabs" id="main-tabs">
+                <button class="tab-btn active" onclick="openTab(event, 'tab-punch')">⚡ Punch</button>
+                <button class="tab-btn" onclick="openTab(event, 'tab-laser')">🔴 Laser</button>
                 <button class="tab-btn" onclick="openTab(event, 'tab-stopa')">Stopa</button>
                 <button class="tab-btn" onclick="openTab(event, 'tab-inventory')">Inventario</button>
             </div>
 
             <!-- INVENTORY TAB CONTENT -->
             <div id="tab-inventory" class="tab-content">
-                <div
-                    style="background: var(--gray-50); padding: 10px; margin-bottom: 15px; border-radius: 6px; border: 1px solid var(--gray-200);">
-                    <strong>Proyecto Actual:</strong>
-                    {% if history and history[-1].metadata %}
-                    {{ history[-1].metadata.project }} ({{ history[-1].metadata.model }})
-                    {% else %}
-                    No definido
-                    {% endif %}
-                </div>
 
                 <div class="table-container">
                     <table class="results_table">
@@ -246,7 +281,7 @@
                             {% endfor %}
                             {% else %}
                             <tr>
-                                <td colspan="6" style="text-align:center; padding: 20px;">Sin resumen de inventario
+                                <td colspan="9" style="text-align:center; padding: 20px;">Sin resumen de inventario
                                     disponible.</td>
                             </tr>
                             {% endif %}
@@ -255,134 +290,182 @@
                 </div>
             </div>
 
-            <!-- PUNCH TAB CONTENT -->
+            <!-- PUNCH TAB CONTENT con sub-pestañas por PDF -->
             <div id="tab-punch" class="tab-content active">
-                <div class="table-container">
-                    <table class="results_table">
-                        <thead>
-                            <tr>
-                                <th>Origen</th>
-                                <th>Part #</th>
-                                <th>Qté Prod.</th>
-                                <th>Stock Int.</th>
-                                <th>Stock Ext.</th>
-                                <th>Clasif.</th>
-                                <th>Razón</th>
-                                <th>Faltante Auto.</th>
-                                <th>Posible Cambio</th>
-                                <th>Kanban</th>
-                                <th>Reservado</th>
-                                <th>Disponible</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for row in results %}
-                            {% if row.origen == 'Punch' %}
-                            <tr class="row-{{ row.clasificacion }}">
-                                <td>{{ row.origen }}</td>
-                                <td class="font-mono">{{ row.part_number }}</td>
-                                <td>{{ row.qte_a_produire }}</td>
-                                <td>{{ row.stopa_quantity | int }}</td>
-                                <td>{{ row.external_quantity | int }}</td>
-                                <td><span class="badge badge-{{ row.clasificacion }}">{{ row.clasificacion }}</span>
-                                </td>
-                                <td class="text-small">{{ row.razon }}</td>
-                                <td>
-                                    {% if row.deficit_internal %}
-                                    <span class="badge badge-BO">{{ row.deficit_internal | int }}</span>
-                                    {% endif %}
-                                </td>
-                                <td>
-                                    {% if row.possible_substitute %}
-                                    <span class="badge badge-Alt">{{ row.possible_substitute }}</span>
-                                    {% endif %}
-                                </td>
-                                <td>
-                                    {% if row.substitute_info %}
-                                    {{ row.substitute_info.kanban }}
-                                    {% endif %}
-                                </td>
-                                <td>
-                                    {% if row.substitute_info %}
-                                    {{ row.substitute_info.reserved | int }}
-                                    {% endif %}
-                                </td>
-                                <td>
-                                    {% if row.substitute_info %}
-                                    {{ row.substitute_info.free | int }}
-                                    {% endif %}
-                                </td>
-                            </tr>
-                            {% endif %}
-                            {% endfor %}
-                        </tbody>
-                    </table>
+                {% if punch_pdf_labels %}
+                <!-- Sub-tabs de Punch -->
+                <div class="subtabs" id="punch-subtabs">
+                    {% for label in punch_pdf_labels %}
+                    <button class="subtab-btn {% if loop.first %}active{% endif %}"
+                        onclick="openSubTab(event, 'punch-sub-{{ loop.index }}', 'punch-subtabs', 'punch-subcontent')">
+                        {{ label }}
+                    </button>
+                    {% endfor %}
                 </div>
+                {% for label in punch_pdf_labels %}
+                <div id="punch-sub-{{ loop.index }}" class="subtab-content {% if loop.first %}active{% endif %}">
+                    <div class="table-container">
+                        <table class="results_table">
+                            <thead>
+                                <tr>
+                                    <th>Origen</th>
+                                    <th>Part #</th>
+                                    <th>Qté Prod.</th>
+                                    <th>Stock Int.</th>
+                                    <th>Stock Ext.</th>
+                                    <th>Clasif.</th>
+                                    <th>Razón</th>
+                                    <th>Faltante Auto.</th>
+                                    <th>Posible Cambio</th>
+                                    <th>Kanban</th>
+                                    <th>Reservado</th>
+                                    <th>Disponible</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% set ns = namespace(found=false) %}
+                                {% for row in results %}
+                                {% if row.origen == 'Punch' and row.pdf_label == label %}
+                                {% set ns.found = true %}
+                                <tr class="row-{{ row.clasificacion }}">
+                                    <td>{{ row.origen }}</td>
+                                    <td class="font-mono">{{ row.part_number }}</td>
+                                    <td>{{ row.qte_a_produire }}</td>
+                                    <td>{{ row.stopa_quantity | int }}</td>
+                                    <td>{{ row.external_quantity | int }}</td>
+                                    <td><span class="badge badge-{{ row.clasificacion }}">{{ row.clasificacion }}</span>
+                                    </td>
+                                    <td class="text-small">{{ row.razon }}</td>
+                                    <td>
+                                        {% if row.deficit_internal %}
+                                        <span class="badge badge-BO">{{ row.deficit_internal | int }}</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if row.possible_substitute %}
+                                        <span class="badge badge-Alt">{{ row.possible_substitute }}</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if row.substitute_info %}
+                                        {{ row.substitute_info.kanban }}
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if row.substitute_info %}
+                                        {{ row.substitute_info.reserved | int }}
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if row.substitute_info %}
+                                        {{ row.substitute_info.free | int }}
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endif %}
+                                {% endfor %}
+                                {% if not ns.found %}
+                                <tr>
+                                    <td colspan="12" style="text-align:center; padding:15px; color: var(--secondary);">Sin resultados para este PDF.</td>
+                                </tr>
+                                {% endif %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                {% endfor %}
+                {% else %}
+                <div class="empty-tab-msg">No se cargaron archivos Punch en este análisis.</div>
+                {% endif %}
             </div>
 
-            <!-- LASER TAB CONTENT -->
+            <!-- LASER TAB CONTENT con sub-pestañas por PDF -->
             <div id="tab-laser" class="tab-content">
-                <div class="table-container">
-                    <table class="results_table">
-                        <thead>
-                            <tr>
-                                <th>Origen</th>
-                                <th>Part #</th>
-                                <th>Qté Prod.</th>
-                                <th>Stock Int.</th>
-                                <th>Stock Ext.</th>
-                                <th>Clasif.</th>
-                                <th>Razón</th>
-                                <th>Faltante Auto.</th>
-                                <th>Posible Cambio</th>
-                                <th>Kanban</th>
-                                <th>Reservado</th>
-                                <th>Disponible</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for row in results %}
-                            {% if row.origen == 'Laser' %}
-                            <tr class="row-{{ row.clasificacion }}">
-                                <td>{{ row.origen }}</td>
-                                <td class="font-mono">{{ row.part_number }}</td>
-                                <td>{{ row.qte_a_produire }}</td>
-                                <td>{{ row.stopa_quantity | int }}</td>
-                                <td>{{ row.external_quantity | int }}</td>
-                                <td><span class="badge badge-{{ row.clasificacion }}">{{ row.clasificacion }}</span>
-                                </td>
-                                <td class="text-small">{{ row.razon }}</td>
-                                <td>
-                                    {% if row.deficit_internal %}
-                                    <span class="badge badge-BO">{{ row.deficit_internal | int }}</span>
-                                    {% endif %}
-                                </td>
-                                <td>
-                                    {% if row.possible_substitute %}
-                                    <span class="badge badge-Alt">{{ row.possible_substitute }}</span>
-                                    {% endif %}
-                                </td>
-                                <td>
-                                    {% if row.substitute_info %}
-                                    {{ row.substitute_info.kanban }}
-                                    {% endif %}
-                                </td>
-                                <td>
-                                    {% if row.substitute_info %}
-                                    {{ row.substitute_info.reserved | int }}
-                                    {% endif %}
-                                </td>
-                                <td>
-                                    {% if row.substitute_info %}
-                                    {{ row.substitute_info.free | int }}
-                                    {% endif %}
-                                </td>
-                            </tr>
-                            {% endif %}
-                            {% endfor %}
-                        </tbody>
-                    </table>
+                {% if laser_pdf_labels %}
+                <!-- Sub-tabs de Laser -->
+                <div class="subtabs" id="laser-subtabs">
+                    {% for label in laser_pdf_labels %}
+                    <button class="subtab-btn {% if loop.first %}active{% endif %}"
+                        onclick="openSubTab(event, 'laser-sub-{{ loop.index }}', 'laser-subtabs', 'laser-subcontent')">
+                        {{ label }}
+                    </button>
+                    {% endfor %}
                 </div>
+                {% for label in laser_pdf_labels %}
+                <div id="laser-sub-{{ loop.index }}" class="subtab-content {% if loop.first %}active{% endif %}">
+                    <div class="table-container">
+                        <table class="results_table">
+                            <thead>
+                                <tr>
+                                    <th>Origen</th>
+                                    <th>Part #</th>
+                                    <th>Qté Prod.</th>
+                                    <th>Stock Int.</th>
+                                    <th>Stock Ext.</th>
+                                    <th>Clasif.</th>
+                                    <th>Razón</th>
+                                    <th>Faltante Auto.</th>
+                                    <th>Posible Cambio</th>
+                                    <th>Kanban</th>
+                                    <th>Reservado</th>
+                                    <th>Disponible</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% set ns = namespace(found=false) %}
+                                {% for row in results %}
+                                {% if row.origen == 'Laser' and row.pdf_label == label %}
+                                {% set ns.found = true %}
+                                <tr class="row-{{ row.clasificacion }}">
+                                    <td>{{ row.origen }}</td>
+                                    <td class="font-mono">{{ row.part_number }}</td>
+                                    <td>{{ row.qte_a_produire }}</td>
+                                    <td>{{ row.stopa_quantity | int }}</td>
+                                    <td>{{ row.external_quantity | int }}</td>
+                                    <td><span class="badge badge-{{ row.clasificacion }}">{{ row.clasificacion }}</span>
+                                    </td>
+                                    <td class="text-small">{{ row.razon }}</td>
+                                    <td>
+                                        {% if row.deficit_internal %}
+                                        <span class="badge badge-BO">{{ row.deficit_internal | int }}</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if row.possible_substitute %}
+                                        <span class="badge badge-Alt">{{ row.possible_substitute }}</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if row.substitute_info %}
+                                        {{ row.substitute_info.kanban }}
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if row.substitute_info %}
+                                        {{ row.substitute_info.reserved | int }}
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if row.substitute_info %}
+                                        {{ row.substitute_info.free | int }}
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endif %}
+                                {% endfor %}
+                                {% if not ns.found %}
+                                <tr>
+                                    <td colspan="12" style="text-align:center; padding:15px; color: var(--secondary);">Sin resultados para este PDF.</td>
+                                </tr>
+                                {% endif %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                {% endfor %}
+                {% else %}
+                <div class="empty-tab-msg">No se cargaron archivos Laser en este análisis.</div>
+                {% endif %}
             </div>
 
             <!-- STOPA TAB CONTENT -->
@@ -425,7 +508,91 @@
 
     <!-- SCRIPTS -->
     <script>
-        document.querySelectorAll('input[type="file"]').forEach(input => {
+        // =========================================================
+        // Manejo de archivos con DataTransfer para múltiples PDFs
+        // =========================================================
+        const punchFiles = new DataTransfer();
+        const laserFiles = new DataTransfer();
+
+        function handleFileAdd(machine, input) {
+            const dt = machine === 'punch' ? punchFiles : laserFiles;
+            const newFiles = input.files;
+
+            for (let i = 0; i < newFiles.length; i++) {
+                // Evitar duplicados por nombre
+                let exists = false;
+                for (let j = 0; j < dt.files.length; j++) {
+                    if (dt.files[j].name === newFiles[i].name) { exists = true; break; }
+                }
+                if (!exists) dt.items.add(newFiles[i]);
+            }
+
+            // Asignar la lista acumulada al input
+            input.files = dt.files;
+            renderFileList(machine);
+        }
+
+        function renderFileList(machine) {
+            const dt = machine === 'punch' ? punchFiles : laserFiles;
+            const listEl = document.getElementById(`${machine}-file-list`);
+            const wrapper = document.getElementById(`${machine}-list-wrapper`);
+            const placeholder = document.getElementById(`${machine}-placeholder`);
+
+            listEl.innerHTML = '';
+            if (dt.files.length === 0) {
+                wrapper.style.display = 'none';
+                placeholder.textContent = 'Seleccionar PDF(s)...';
+                return;
+            }
+
+            wrapper.style.display = 'block';
+            placeholder.textContent = `${dt.files.length} archivo(s) seleccionado(s)`;
+
+            for (let i = 0; i < dt.files.length; i++) {
+                const li = document.createElement('li');
+                li.className = 'file-list-item';
+                li.innerHTML = `
+                    <span class="file-list-icon">📄</span>
+                    <span class="file-list-name">${dt.files[i].name}</span>
+                    <button type="button" class="file-list-remove" onclick="removeFile('${machine}', ${i})" title="Quitar">✕</button>
+                `;
+                listEl.appendChild(li);
+            }
+        }
+
+        function removeFile(machine, index) {
+            const dt = machine === 'punch' ? punchFiles : laserFiles;
+            const inputId = machine === 'punch' ? 'punch_file' : 'laser_file';
+            const input = document.getElementById(inputId);
+
+            const newDt = new DataTransfer();
+            for (let i = 0; i < dt.files.length; i++) {
+                if (i !== index) newDt.items.add(dt.files[i]);
+            }
+
+            if (machine === 'punch') {
+                punchFiles.clearData();
+                for (let i = 0; i < newDt.files.length; i++) punchFiles.items.add(newDt.files[i]);
+            } else {
+                laserFiles.clearData();
+                for (let i = 0; i < newDt.files.length; i++) laserFiles.items.add(newDt.files[i]);
+            }
+
+            input.files = newDt.files;
+            renderFileList(machine);
+        }
+
+        function clearFileList(machine) {
+            const inputId = machine === 'punch' ? 'punch_file' : 'laser_file';
+            const input = document.getElementById(inputId);
+            if (machine === 'punch') { punchFiles.clearData(); }
+            else { laserFiles.clearData(); }
+            input.files = new DataTransfer().files;
+            renderFileList(machine);
+        }
+
+        // Input de archivo estándar (inventario, stopa)
+        document.querySelectorAll('input[type="file"]:not(#punch_file):not(#laser_file)').forEach(input => {
             input.addEventListener('change', function (e) {
                 const fileName = e.target.files[0] ? e.target.files[0].name : 'Seleccionar...';
                 e.target.parentElement.querySelector('.file-name').textContent = fileName;
@@ -433,40 +600,80 @@
             });
         });
 
-        function downloadExcel() {
-            // Identificar qué tab está activa
-            var activeTab = document.querySelector('.tab-content.active');
-            var activeTabId = activeTab ? activeTab.id : 'tab-punch'; // Default fallback
-
-            var exportType = 'punch';
-            if (activeTabId === 'tab-laser') {
-                exportType = 'laser';
-            } else if (activeTabId === 'tab-inventory') {
-                exportType = 'inventory';
-            } else if (activeTabId === 'tab-stopa') {
-                exportType = 'stopa';
-            } else if (activeTabId === 'tab-punch') {
-                exportType = 'punch';
+        // =========================================================
+        // Checkboxes de prioridad: exclusión mutua + efecto visual
+        // =========================================================
+        function handlePriorityCheck(selected) {
+            // Si marcamos uno, desmarcamos el otro (exclusión mutua)
+            const other = selected === 'punch' ? 'laser' : 'punch';
+            const otherEl = document.getElementById('priority-' + other);
+            if (otherEl && otherEl.checked) {
+                otherEl.checked = false;
+                document.getElementById('label-priority-' + other).classList.remove('selected');
             }
+            const thisEl = document.getElementById('priority-' + selected);
+            const thisLabel = document.getElementById('label-priority-' + selected);
+            if (thisEl && thisEl.checked) {
+                thisLabel.classList.add('selected');
+            } else {
+                thisLabel.classList.remove('selected');
+            }
+        }
+        // Inicializar estado visual de checkboxes al cargar
+        document.querySelectorAll('input[name="priority_machine"]').forEach(cb => {
+            if (cb.checked) cb.closest('.radio-option').classList.add('selected');
+        });
 
-            // Redirigir al endpoint de descarga
+        // =========================================================
+        // Tabs principales
+        // =========================================================
+        function downloadExcel() {
+            var activeTab = document.querySelector('.tab-content.active');
+            var activeTabId = activeTab ? activeTab.id : 'tab-punch';
+            var exportType = 'punch';
+            if (activeTabId === 'tab-laser') exportType = 'laser';
+            else if (activeTabId === 'tab-inventory') exportType = 'inventory';
+            else if (activeTabId === 'tab-stopa') exportType = 'stopa';
+            else if (activeTabId === 'tab-punch') exportType = 'punch';
             window.location.href = '/export/' + exportType;
         }
 
         function openTab(evt, tabName) {
-            var i, tabcontent, tablinks;
-            tabcontent = document.getElementsByClassName("tab-content");
-            for (i = 0; i < tabcontent.length; i++) {
-                tabcontent[i].style.display = "none";
-                tabcontent[i].classList.remove("active");
+            document.querySelectorAll('.tab-content').forEach(tc => {
+                tc.style.display = 'none';
+                tc.classList.remove('active');
+            });
+            document.querySelectorAll('#main-tabs .tab-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.getElementById(tabName).style.display = 'block';
+            document.getElementById(tabName).classList.add('active');
+            evt.currentTarget.classList.add('active');
+        }
+
+        // =========================================================
+        // Sub-tabs (por PDF dentro de Punch / Laser)
+        // =========================================================
+        function openSubTab(evt, subTabId, parentSubTabsId, contentClass) {
+            // Encontrar el panel padre (tab-content) del botón clickeado
+            const parentTab = evt.currentTarget.closest('.tab-content');
+            
+            // Ocultar todos los subtab-content dentro de este tab-content
+            parentTab.querySelectorAll('.subtab-content').forEach(sc => {
+                sc.style.display = 'none';
+                sc.classList.remove('active');
+            });
+            // Desactivar todos los subtab-btn dentro de este tab-content
+            parentTab.querySelectorAll('.subtab-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+
+            const target = document.getElementById(subTabId);
+            if (target) {
+                target.style.display = 'block';
+                target.classList.add('active');
             }
-            tablinks = document.getElementsByClassName("tab-btn");
-            for (i = 0; i < tablinks.length; i++) {
-                tablinks[i].className = tablinks[i].className.replace(" active", "");
-            }
-            document.getElementById(tabName).style.display = "block";
-            document.getElementById(tabName).classList.add("active");
-            evt.currentTarget.className += " active";
+            evt.currentTarget.classList.add('active');
         }
     </script>
 </body>
