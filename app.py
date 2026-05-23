@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, send_file, flash, redirect, url_for, session
+from flask import Flask, render_template, request, send_file, flash, redirect, url_for, session, jsonify
 import os
 import pandas as pd
 from werkzeug.utils import secure_filename
@@ -113,6 +113,37 @@ def index():
         laser_pdf_labels=laser_pdf_labels,
     )
 
+@app.route('/preview_pdf', methods=['POST'])
+@login_required
+def preview_pdf():
+    source_type = request.form.get('source_type', 'Punch')
+    file = request.files.get('file')
+    if not file or not file.filename:
+        return jsonify({'error': 'No file provided'}), 400
+
+    analyzer = get_user_analyzer(session['user'])
+    temp_dir = tempfile.mkdtemp()
+    try:
+        path = os.path.join(temp_dir, secure_filename(file.filename))
+        file.save(path)
+        data = analyzer.load_pdf_data(path, source_type)
+        if not data:
+            return jsonify({'error': 'No se pudo parsear el PDF'}), 400
+        items = analyzer.extract_pdf_items(data, source_type)
+        rows = [
+            {
+                'part_number': str(item.get('part_number', '')),
+                'qte_a_produire': int(item.get('qte_a_produire', 0)),
+                'materiel': str(item.get('materiel', '')),
+                'epaisseur': str(item.get('epaisseur', '')),
+            }
+            for item in items
+        ]
+        return jsonify({'rows': rows, 'total': len(rows)})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/analyze', methods=['POST'])
 @login_required
 def analyze():
@@ -145,20 +176,28 @@ def analyze():
     try:
         # Guardar y cargar PDFs de Punch
         punch_data_list = []
-        for f in punch_files_uploaded:
-            path = os.path.join(temp_dir, secure_filename(f.filename))
+        for idx, f in enumerate(punch_files_uploaded):
+            # Prefijo numérico para evitar colisión cuando el mismo archivo se sube varias veces
+            safe_name = f"{idx}_{secure_filename(f.filename)}"
+            path = os.path.join(temp_dir, safe_name)
             f.save(path)
             data = analyzer.load_pdf_data(path, "Punch")
             if data:
+                # Restaurar el nombre original del archivo como etiqueta visible
+                data['file_path'] = os.path.join(temp_dir, f"{idx}_{f.filename}")
+                data['_display_name'] = f.filename
                 punch_data_list.append(data)
 
         # Guardar y cargar PDFs de Laser
         laser_data_list = []
-        for f in laser_files_uploaded:
-            path = os.path.join(temp_dir, secure_filename(f.filename))
+        for idx, f in enumerate(laser_files_uploaded):
+            safe_name = f"{idx}_{secure_filename(f.filename)}"
+            path = os.path.join(temp_dir, safe_name)
             f.save(path)
             data = analyzer.load_pdf_data(path, "Laser")
             if data:
+                data['file_path'] = os.path.join(temp_dir, f"{idx}_{f.filename}")
+                data['_display_name'] = f.filename
                 laser_data_list.append(data)
 
         # Cargar Stopa
@@ -198,6 +237,19 @@ def analyze():
             'rule_external_low': 'rule_external_low' in request.form
         }
              
+        # Leer filas excluidas por archivo (índices separados por coma)
+        punch_excluded = {}
+        for i in range(len(punch_data_list)):
+            excl_str = request.form.get(f'punch_excluded_{i}', '').strip()
+            if excl_str:
+                punch_excluded[i] = {int(x) for x in excl_str.split(',') if x.strip().isdigit()}
+
+        laser_excluded = {}
+        for i in range(len(laser_data_list)):
+            excl_str = request.form.get(f'laser_excluded_{i}', '').strip()
+            if excl_str:
+                laser_excluded[i] = {int(x) for x in excl_str.split(',') if x.strip().isdigit()}
+
         analyzer.run_full_analysis(
             punch_data_list,
             laser_data_list,
@@ -205,7 +257,9 @@ def analyze():
             stopa_data,
             metadata,
             enabled_rules,
-            priority=priority
+            priority=priority,
+            punch_excluded=punch_excluded or None,
+            laser_excluded=laser_excluded or None,
         )
         
         if not analyzer.last_results:

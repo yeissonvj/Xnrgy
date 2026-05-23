@@ -707,7 +707,7 @@ class StockAnalyzer:
             
         return results
 
-    def run_full_analysis(self, punch_files, laser_files, inventory_data=None, stopa_data=None, metadata=None, enabled_rules=None, priority=None):
+    def run_full_analysis(self, punch_files, laser_files, inventory_data=None, stopa_data=None, metadata=None, enabled_rules=None, priority=None, punch_excluded=None, laser_excluded=None):
         """
         Ejecuta el flujo completo de análisis.
         
@@ -730,6 +730,10 @@ class StockAnalyzer:
         if self.df_inventory_working is None:
             self.log("No hay inventario cargado. Imposible analizar.", "error")
             return results
+
+        # Mapas id→índice para aplicar exclusiones de filas por archivo
+        punch_id_to_idx = {id(pdf): i for i, pdf in enumerate(punch_files) if pdf}
+        laser_id_to_idx = {id(pdf): i for i, pdf in enumerate(laser_files) if pdf}
 
         # Determinar el orden de procesamiento según prioridad
         punch_entries = [(pdf, 'Punch') for pdf in punch_files if pdf]
@@ -761,36 +765,67 @@ class StockAnalyzer:
                 if i < len(laser_entries):
                     processing_list.append(laser_entries[i])
 
-        # Guardar el orden de archivos para reordenar la salida al final
+        # Guardar el orden de archivos para reordenar la salida al final.
+        # Usamos _display_name (nombre original sin prefijo numérico) y añadimos
+        # un sufijo de copia " (2)", " (3)"... cuando el mismo nombre aparece más de una vez.
         file_order = []
+        _label_count = {}  # nombre -> cuántas veces ha aparecido
         for pdf_data, source in processing_list:
             import os
-            filename = os.path.basename(pdf_data.get('file_path', ''))
-            pdf_label = filename if filename else f"{source}_pdf"
+            raw_name = pdf_data.get('_display_name') or os.path.basename(pdf_data.get('file_path', ''))
+            pdf_label = raw_name if raw_name else f"{source}_pdf"
+            _label_count[pdf_label] = _label_count.get(pdf_label, 0) + 1
+            if _label_count[pdf_label] > 1:
+                pdf_label = f"{pdf_label} ({_label_count[pdf_label]})"
+            pdf_data['_pdf_label'] = pdf_label  # Guardar para el loop de procesamiento
             file_order.append(pdf_label)
 
-        results_by_file = {}  # pdf_label -> lista de resultados (en orden de cantidades)
+        results_by_file = {}  # pdf_label -> lista de resultados
 
         for pdf_data, source_label in processing_list:
-            import os
-            filename = os.path.basename(pdf_data.get('file_path', ''))
-            pdf_label = filename if filename else f"{source_label}_pdf"
+            # Usar la etiqueta ya calculada con sufijo de copia si es necesario
+            pdf_label = pdf_data.get('_pdf_label', '')
+            if not pdf_label:
+                import os
+                pdf_label = os.path.basename(pdf_data.get('file_path', '')) or f"{source_label}_pdf"
 
             self.log(f"Procesando {source_label}: {pdf_label}", "process")
             items = self.extract_pdf_items(pdf_data, source_label)
 
+            # Aplicar exclusiones de filas seleccionadas por el usuario
+            if source_label == 'Punch' and punch_excluded:
+                file_idx = punch_id_to_idx.get(id(pdf_data))
+                if file_idx is not None:
+                    excl = punch_excluded.get(file_idx, set())
+                    if excl:
+                        items = [item for i, item in enumerate(items) if i not in excl]
+                        self.log(f"Excluidas {len(excl)} filas del archivo Punch #{file_idx + 1}", "info")
+            elif source_label == 'Laser' and laser_excluded:
+                file_idx = laser_id_to_idx.get(id(pdf_data))
+                if file_idx is not None:
+                    excl = laser_excluded.get(file_idx, set())
+                    if excl:
+                        items = [item for i, item in enumerate(items) if i not in excl]
+                        self.log(f"Excluidas {len(excl)} filas del archivo Laser #{file_idx + 1}", "info")
+
             # --- REGLA DE PRIORIDAD POR CANTIDAD PEQUEÑA ---
-            # Cuando un mismo part_number aparece varias veces en el PDF,
-            # se ordenan sus requisiciones de MENOR a MAYOR qte_a_produire.
-            # Esto garantiza que con stock limitado se cumplen primero los
-            # pedidos más pequeños (maximizando el número de requisiciones cubiertas).
+            # Guardamos el índice original (posición en el PDF) en cada item.
+            for orig_idx, it in enumerate(items):
+                it['_pdf_row_order'] = orig_idx
+
+            # Ordenamos de MENOR a MAYOR qte_a_produire para que con stock limitado
+            # se cubran primero los pedidos más pequeños (maximiza requisiciones cubiertas).
             items_sorted = sorted(items, key=lambda x: (x['part_number'], x['qte_a_produire']))
 
-            file_results = []
+            file_results_by_order = {}
             for item in items_sorted:
                 res = self.analyze_item(item, self.df_inventory_working, source_label, enabled_rules)
                 res['pdf_label'] = pdf_label
-                file_results.append(res)
+                res['_pdf_row_order'] = item['_pdf_row_order']
+                file_results_by_order[item['_pdf_row_order']] = res
+
+            # Restaurar el orden original del PDF para la salida
+            file_results = [file_results_by_order[i] for i in sorted(file_results_by_order.keys())]
 
             results_by_file[pdf_label] = file_results
 

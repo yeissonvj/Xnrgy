@@ -7,6 +7,136 @@
     <title>Xnrgy Stock Analysis</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* ---- Botón Ver y badge en el listbox ---- */
+        .file-list-open-btn {
+            background: #eff6ff;
+            border: 1px solid #2563eb;
+            color: #2563eb;
+            border-radius: 4px;
+            padding: 2px 8px;
+            font-size: 0.73rem;
+            font-weight: 500;
+            cursor: pointer;
+            margin-right: 4px;
+            flex-shrink: 0;
+        }
+        .file-list-open-btn:hover { background: #2563eb; color: #fff; }
+        .file-list-badge {
+            background: #f59e0b;
+            color: #fff;
+            border-radius: 10px;
+            padding: 1px 7px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            margin-right: 4px;
+            flex-shrink: 0;
+        }
+        /* ---- Modal overlay ---- */
+        .preview-modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .preview-modal-box {
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+            width: 92%;
+            max-width: 840px;
+            max-height: 85vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .preview-modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 20px;
+            border-bottom: 1px solid #e5e7eb;
+            flex-shrink: 0;
+        }
+        .preview-modal-header h3 {
+            margin: 0;
+            font-size: 0.95rem;
+            color: #374151;
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 650px;
+        }
+        .preview-modal-close {
+            background: none;
+            border: none;
+            font-size: 1.15rem;
+            cursor: pointer;
+            color: #6b7280;
+            padding: 4px 8px;
+            border-radius: 4px;
+            flex-shrink: 0;
+        }
+        .preview-modal-close:hover { background: #f3f4f6; }
+        .preview-modal-body {
+            overflow-y: auto;
+            flex: 1;
+            padding: 0;
+        }
+        .preview-modal-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 20px;
+            border-top: 1px solid #e5e7eb;
+            flex-shrink: 0;
+            gap: 10px;
+        }
+        .preview-modal-status {
+            color: #6b7280;
+            font-size: 0.82rem;
+        }
+        /* ---- Tabla del modal ---- */
+        .preview-modal-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.84rem;
+        }
+        .preview-modal-table thead th {
+            position: sticky;
+            top: 0;
+            background: #f9fafb;
+            padding: 9px 12px;
+            text-align: left;
+            border-bottom: 2px solid #e5e7eb;
+            font-weight: 600;
+            color: #374151;
+            white-space: nowrap;
+        }
+        .preview-modal-table thead th:first-child { width: 36px; text-align: center; }
+        .preview-modal-table tbody td {
+            padding: 7px 12px;
+            border-bottom: 1px solid #f3f4f6;
+            vertical-align: middle;
+        }
+        .preview-modal-table tbody tr:hover td { background: #f9fafb; }
+        .preview-modal-table tbody tr.row-excluded td {
+            opacity: 0.35;
+            text-decoration: line-through;
+        }
+        .preview-modal-table tbody tr.row-excluded td:first-child {
+            opacity: 1;
+            text-decoration: none;
+        }
+        .preview-modal-table tbody td:first-child { text-align: center; }
+        .row-checkbox { width: 15px; height: 15px; cursor: pointer; }
+        .modal-check-all { width: 15px; height: 15px; cursor: pointer; }
+        .modal-loading { padding: 30px; text-align: center; color: #6b7280; font-size: 0.9rem; }
+    </style>
 </head>
 
 <body>
@@ -506,88 +636,121 @@
         {% endif %}
     </div>
 
+    <!-- MODAL PREVIEW DE REGISTROS PDF -->
+    <div id="preview-modal" class="preview-modal-overlay" style="display:none;" onclick="handleModalOverlayClick(event)">
+        <div class="preview-modal-box">
+            <div class="preview-modal-header">
+                <h3 id="preview-modal-title">Registros del archivo</h3>
+                <button type="button" class="preview-modal-close" onclick="closePreviewModal()" title="Cerrar">✕</button>
+            </div>
+            <div class="preview-modal-body" id="preview-modal-body">
+                <div class="modal-loading">Cargando...</div>
+            </div>
+            <div class="preview-modal-footer">
+                <span class="preview-modal-status" id="preview-modal-status"></span>
+                <button type="button" class="btn-primary" style="padding:6px 18px;font-size:0.85rem;" onclick="closePreviewModal()">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
     <!-- SCRIPTS -->
     <script>
         // =========================================================
         // Manejo de archivos con DataTransfer para múltiples PDFs
         // =========================================================
-        const punchFiles = new DataTransfer();
-        const laserFiles = new DataTransfer();
+        const punchEntries = [];  // [{uid, file}, ...]
+        const laserEntries = [];  // [{uid, file}, ...]
+        let _uidCounter = 0;
+
+        // Estado de previews y exclusiones por uid
+        const punchPreviews = {};   // uid -> rows[]
+        const laserPreviews = {};   // uid -> rows[]
+        const punchExcluded = {};   // uid -> Set<rowIndex>
+        const laserExcluded = {};   // uid -> Set<rowIndex>
+
+        // Estado del modal activo
+        let currentModalMachine = null;
+        let currentModalUid = null;
+
+        function _rebuildInput(machine) {
+            const entries = machine === 'punch' ? punchEntries : laserEntries;
+            const inputId = machine === 'punch' ? 'punch_file' : 'laser_file';
+            const input = document.getElementById(inputId);
+            const dt = new DataTransfer();
+            entries.forEach(e => dt.items.add(e.file));
+            input.files = dt.files;
+        }
 
         function handleFileAdd(machine, input) {
-            const dt = machine === 'punch' ? punchFiles : laserFiles;
-            const newFiles = input.files;
-
-            for (let i = 0; i < newFiles.length; i++) {
-                // Evitar duplicados por nombre
-                let exists = false;
-                for (let j = 0; j < dt.files.length; j++) {
-                    if (dt.files[j].name === newFiles[i].name) { exists = true; break; }
-                }
-                if (!exists) dt.items.add(newFiles[i]);
+            const entries = machine === 'punch' ? punchEntries : laserEntries;
+            for (let i = 0; i < input.files.length; i++) {
+                entries.push({ uid: _uidCounter++, file: input.files[i] });
             }
-
-            // Asignar la lista acumulada al input
-            input.files = dt.files;
+            _rebuildInput(machine);
             renderFileList(machine);
         }
 
         function renderFileList(machine) {
-            const dt = machine === 'punch' ? punchFiles : laserFiles;
+            const entries = machine === 'punch' ? punchEntries : laserEntries;
             const listEl = document.getElementById(`${machine}-file-list`);
             const wrapper = document.getElementById(`${machine}-list-wrapper`);
             const placeholder = document.getElementById(`${machine}-placeholder`);
 
             listEl.innerHTML = '';
-            if (dt.files.length === 0) {
+            if (entries.length === 0) {
                 wrapper.style.display = 'none';
                 placeholder.textContent = 'Seleccionar PDF(s)...';
                 return;
             }
 
             wrapper.style.display = 'block';
-            placeholder.textContent = `${dt.files.length} archivo(s) seleccionado(s)`;
+            placeholder.textContent = `${entries.length} archivo(s) seleccionado(s)`;
 
-            for (let i = 0; i < dt.files.length; i++) {
+            const previews = machine === 'punch' ? punchPreviews : laserPreviews;
+            const excluded = machine === 'punch' ? punchExcluded : laserExcluded;
+
+            entries.forEach((entry) => {
+                const rows = previews[entry.uid];
+                const excSet = excluded[entry.uid] || new Set();
+                const hasExcl = rows && excSet.size > 0;
+                const badgeText = rows ? `${rows.length - excSet.size}/${rows.length} act.` : '';
+
                 const li = document.createElement('li');
                 li.className = 'file-list-item';
+                li.dataset.uid = entry.uid;
                 li.innerHTML = `
                     <span class="file-list-icon">📄</span>
-                    <span class="file-list-name">${dt.files[i].name}</span>
-                    <button type="button" class="file-list-remove" onclick="removeFile('${machine}', ${i})" title="Quitar">✕</button>
+                    <span class="file-list-name" title="${entry.file.name}">${entry.file.name}</span>
+                    <span class="file-list-badge" id="badge-${machine}-${entry.uid}" style="display:${hasExcl ? 'inline' : 'none'}">${badgeText}</span>
+                    <button type="button" class="file-list-open-btn" onclick="openPreviewModal('${machine}', ${entry.uid})" title="Ver y filtrar registros">Ver</button>
+                    <button type="button" class="file-list-remove" onclick="removeFile('${machine}', ${entry.uid})" title="Quitar">✕</button>
                 `;
                 listEl.appendChild(li);
-            }
+            });
         }
 
-        function removeFile(machine, index) {
-            const dt = machine === 'punch' ? punchFiles : laserFiles;
-            const inputId = machine === 'punch' ? 'punch_file' : 'laser_file';
-            const input = document.getElementById(inputId);
-
-            const newDt = new DataTransfer();
-            for (let i = 0; i < dt.files.length; i++) {
-                if (i !== index) newDt.items.add(dt.files[i]);
-            }
-
-            if (machine === 'punch') {
-                punchFiles.clearData();
-                for (let i = 0; i < newDt.files.length; i++) punchFiles.items.add(newDt.files[i]);
-            } else {
-                laserFiles.clearData();
-                for (let i = 0; i < newDt.files.length; i++) laserFiles.items.add(newDt.files[i]);
-            }
-
-            input.files = newDt.files;
+        function removeFile(machine, uid) {
+            const entries = machine === 'punch' ? punchEntries : laserEntries;
+            const idx = entries.findIndex(e => e.uid === uid);
+            if (idx !== -1) entries.splice(idx, 1);
+            // Limpiar estado del archivo removido
+            delete (machine === 'punch' ? punchPreviews : laserPreviews)[uid];
+            delete (machine === 'punch' ? punchExcluded : laserExcluded)[uid];
+            _rebuildInput(machine);
             renderFileList(machine);
         }
 
         function clearFileList(machine) {
-            const inputId = machine === 'punch' ? 'punch_file' : 'laser_file';
-            const input = document.getElementById(inputId);
-            if (machine === 'punch') { punchFiles.clearData(); }
-            else { laserFiles.clearData(); }
-            input.files = new DataTransfer().files;
+            if (machine === 'punch') {
+                punchEntries.length = 0;
+                for (const k in punchPreviews) delete punchPreviews[k];
+                for (const k in punchExcluded) delete punchExcluded[k];
+            } else {
+                laserEntries.length = 0;
+                for (const k in laserPreviews) delete laserPreviews[k];
+                for (const k in laserExcluded) delete laserExcluded[k];
+            }
+            _rebuildInput(machine);
             renderFileList(machine);
         }
 
@@ -601,10 +764,226 @@
         });
 
         // =========================================================
+        // Inyectar filas excluidas al enviar el formulario
+        // =========================================================
+        document.getElementById('mainForm').addEventListener('submit', function () {
+            // Eliminar inputs previos para evitar duplicados
+            this.querySelectorAll('.excl-hidden').forEach(el => el.remove());
+            punchEntries.forEach((entry, idx) => {
+                const excSet = punchExcluded[entry.uid];
+                if (excSet && excSet.size > 0) {
+                    const inp = document.createElement('input');
+                    inp.type = 'hidden';
+                    inp.className = 'excl-hidden';
+                    inp.name = `punch_excluded_${idx}`;
+                    inp.value = [...excSet].join(',');
+                    this.appendChild(inp);
+                }
+            });
+            laserEntries.forEach((entry, idx) => {
+                const excSet = laserExcluded[entry.uid];
+                if (excSet && excSet.size > 0) {
+                    const inp = document.createElement('input');
+                    inp.type = 'hidden';
+                    inp.className = 'excl-hidden';
+                    inp.name = `laser_excluded_${idx}`;
+                    inp.value = [...excSet].join(',');
+                    this.appendChild(inp);
+                }
+            });
+        });
+
+        // =========================================================
+        // Modal de preview de registros PDF
+        // =========================================================
+        async function openPreviewModal(machine, uid) {
+            currentModalMachine = machine;
+            currentModalUid = uid;
+
+            const entries = machine === 'punch' ? punchEntries : laserEntries;
+            const entry = entries.find(e => e.uid === uid);
+            if (!entry) return;
+
+            document.getElementById('preview-modal-title').textContent = entry.file.name;
+            document.getElementById('preview-modal-body').innerHTML = '<div class="modal-loading">Cargando registros...</div>';
+            document.getElementById('preview-modal-status').textContent = '';
+            document.getElementById('preview-modal').style.display = 'flex';
+
+            const previews = machine === 'punch' ? punchPreviews : laserPreviews;
+
+            if (!previews[uid]) {
+                try {
+                    const fd = new FormData();
+                    fd.append('file', entry.file);
+                    fd.append('source_type', machine === 'punch' ? 'Punch' : 'Laser');
+                    const resp = await fetch('/preview_pdf', { method: 'POST', body: fd });
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    const data = await resp.json();
+                    if (data.error) throw new Error(data.error);
+                    previews[uid] = data.rows || [];
+                } catch (err) {
+                    document.getElementById('preview-modal-body').innerHTML =
+                        `<div class="modal-loading" style="color:#dc2626;">Error: ${err.message}</div>`;
+                    return;
+                }
+            }
+
+            renderModalRows();
+        }
+
+        function closePreviewModal() {
+            document.getElementById('preview-modal').style.display = 'none';
+            currentModalMachine = null;
+            currentModalUid = null;
+        }
+
+        function handleModalOverlayClick(e) {
+            if (e.target === document.getElementById('preview-modal')) closePreviewModal();
+        }
+
+        function renderModalRows() {
+            const machine = currentModalMachine;
+            const uid = currentModalUid;
+            const previews = machine === 'punch' ? punchPreviews : laserPreviews;
+            const excluded = machine === 'punch' ? punchExcluded : laserExcluded;
+            const rows = previews[uid] || [];
+
+            if (!excluded[uid]) excluded[uid] = new Set();
+            const excSet = excluded[uid];
+
+            if (rows.length === 0) {
+                document.getElementById('preview-modal-body').innerHTML =
+                    '<div class="modal-loading">No se encontraron registros en este archivo.</div>';
+                document.getElementById('preview-modal-status').textContent = '';
+                return;
+            }
+
+            const allChecked = excSet.size === 0;
+            const noneChecked = excSet.size === rows.length;
+
+            let html = `<table class="preview-modal-table">
+                <thead><tr>
+                    <th><input type="checkbox" class="modal-check-all" id="modal-check-all"
+                        ${allChecked ? 'checked' : ''} onchange="toggleAllRows(this)"></th>
+                    <th>#</th>
+                    <th>Part #</th>
+                    <th>Qté Prod.</th>
+                    <th>Matériel</th>
+                    <th>Épaisseur</th>
+                </tr></thead><tbody>`;
+
+            rows.forEach((row, idx) => {
+                const checked = !excSet.has(idx);
+                html += `<tr class="${checked ? '' : 'row-excluded'}">
+                    <td><input type="checkbox" class="row-checkbox" ${checked ? 'checked' : ''}
+                        onchange="toggleRow(this, ${idx})"></td>
+                    <td style="color:#9ca3af;font-size:0.78rem;">${idx + 1}</td>
+                    <td class="font-mono" style="font-weight:600;">${row.part_number || '—'}</td>
+                    <td>${row.qte_a_produire ?? '—'}</td>
+                    <td>${row.materiel || '—'}</td>
+                    <td>${row.epaisseur || '—'}</td>
+                </tr>`;
+            });
+
+            html += '</tbody></table>';
+            document.getElementById('preview-modal-body').innerHTML = html;
+
+            if (!allChecked && !noneChecked) {
+                document.getElementById('modal-check-all').indeterminate = true;
+            }
+
+            updateModalStatus();
+        }
+
+        function toggleRow(checkbox, rowIdx) {
+            const machine = currentModalMachine;
+            const uid = currentModalUid;
+            const excluded = machine === 'punch' ? punchExcluded : laserExcluded;
+            if (!excluded[uid]) excluded[uid] = new Set();
+
+            if (checkbox.checked) {
+                excluded[uid].delete(rowIdx);
+                checkbox.closest('tr').classList.remove('row-excluded');
+            } else {
+                excluded[uid].add(rowIdx);
+                checkbox.closest('tr').classList.add('row-excluded');
+            }
+            updateCheckAllState();
+            updateModalStatus();
+            updateFileListBadge(machine, uid);
+        }
+
+        function toggleAllRows(masterCb) {
+            const machine = currentModalMachine;
+            const uid = currentModalUid;
+            const excluded = machine === 'punch' ? punchExcluded : laserExcluded;
+            const previews = machine === 'punch' ? punchPreviews : laserPreviews;
+            const rows = previews[uid] || [];
+            if (!excluded[uid]) excluded[uid] = new Set();
+
+            if (masterCb.checked) {
+                excluded[uid].clear();
+            } else {
+                rows.forEach((_, i) => excluded[uid].add(i));
+            }
+            renderModalRows();
+            updateFileListBadge(machine, uid);
+        }
+
+        function updateCheckAllState() {
+            const checkboxes = document.querySelectorAll('#preview-modal-body .row-checkbox');
+            const checkedCount = [...checkboxes].filter(cb => cb.checked).length;
+            const total = checkboxes.length;
+            const masterCb = document.getElementById('modal-check-all');
+            if (!masterCb) return;
+            if (checkedCount === 0) {
+                masterCb.checked = false; masterCb.indeterminate = false;
+            } else if (checkedCount === total) {
+                masterCb.checked = true; masterCb.indeterminate = false;
+            } else {
+                masterCb.checked = false; masterCb.indeterminate = true;
+            }
+        }
+
+        function updateModalStatus() {
+            const machine = currentModalMachine;
+            const uid = currentModalUid;
+            const previews = machine === 'punch' ? punchPreviews : laserPreviews;
+            const excluded = machine === 'punch' ? punchExcluded : laserExcluded;
+            const rows = (previews[uid] || []).length;
+            const excl = (excluded[uid] || new Set()).size;
+            const active = rows - excl;
+            const statusEl = document.getElementById('preview-modal-status');
+            if (statusEl) {
+                if (excl === 0) {
+                    statusEl.textContent = `${rows} filas — todas activas`;
+                    statusEl.style.color = '#6b7280';
+                } else {
+                    statusEl.textContent = `${active} de ${rows} filas activas (${excl} excluida${excl !== 1 ? 's' : ''})`;
+                    statusEl.style.color = '#d97706';
+                }
+            }
+        }
+
+        function updateFileListBadge(machine, uid) {
+            const previews = machine === 'punch' ? punchPreviews : laserPreviews;
+            const excluded = machine === 'punch' ? punchExcluded : laserExcluded;
+            const rows = (previews[uid] || []).length;
+            const excl = (excluded[uid] || new Set()).size;
+            const badgeEl = document.getElementById(`badge-${machine}-${uid}`);
+            if (!badgeEl) return;
+            if (rows > 0 && excl > 0) {
+                badgeEl.textContent = `${rows - excl}/${rows} act.`;
+                badgeEl.style.display = 'inline';
+            } else {
+                badgeEl.style.display = 'none';
+            }
+        }
+
+        // =========================================================
         // Checkboxes de prioridad: exclusión mutua + efecto visual
         // =========================================================
         function handlePriorityCheck(selected) {
-            // Si marcamos uno, desmarcamos el otro (exclusión mutua)
             const other = selected === 'punch' ? 'laser' : 'punch';
             const otherEl = document.getElementById('priority-' + other);
             if (otherEl && otherEl.checked) {
@@ -619,7 +998,6 @@
                 thisLabel.classList.remove('selected');
             }
         }
-        // Inicializar estado visual de checkboxes al cargar
         document.querySelectorAll('input[name="priority_machine"]').forEach(cb => {
             if (cb.checked) cb.closest('.radio-option').classList.add('selected');
         });
@@ -655,19 +1033,14 @@
         // Sub-tabs (por PDF dentro de Punch / Laser)
         // =========================================================
         function openSubTab(evt, subTabId, parentSubTabsId, contentClass) {
-            // Encontrar el panel padre (tab-content) del botón clickeado
             const parentTab = evt.currentTarget.closest('.tab-content');
-            
-            // Ocultar todos los subtab-content dentro de este tab-content
             parentTab.querySelectorAll('.subtab-content').forEach(sc => {
                 sc.style.display = 'none';
                 sc.classList.remove('active');
             });
-            // Desactivar todos los subtab-btn dentro de este tab-content
             parentTab.querySelectorAll('.subtab-btn').forEach(btn => {
                 btn.classList.remove('active');
             });
-
             const target = document.getElementById(subTabId);
             if (target) {
                 target.style.display = 'block';
